@@ -850,6 +850,45 @@ def _parse_hook_payload(raw_input: str) -> dict:
     return payload
 
 
+def _context_store_enabled() -> bool:
+    """Opt-in flag for M9 context fragment emission inside hooks.
+
+    Defaults to off so existing audit/session tests don't pick up
+    fragments in the user's home directory. Tests that exercise the
+    integration set ``RULENCE_CONTEXT_STORE_ENABLED=1`` along with
+    ``RULENCE_CONTEXT_DIR`` to pin storage to a tempdir.
+    """
+    flag = os.environ.get("RULENCE_CONTEXT_STORE_ENABLED", "")
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _emit_context_fragments(
+    fragments: tuple,
+) -> None:
+    """Append fragments to the configured ContextStore. Never raises."""
+    if not fragments:
+        return
+    if not _context_store_enabled():
+        return
+    try:
+        from .context import ContextStore
+
+        store = ContextStore()
+        for fragment in fragments:
+            store.add(fragment)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"warn: rulence context fragment write failed: {exc}", file=sys.stderr)
+
+
+def _hook_corr_context(payload: dict, event_type: str):
+    """Resolve the ``CorrelationContext`` for an event without mutating state."""
+    from .audit import CorrelationIdManager
+
+    claude_session = payload.get("session_id") or payload.get("sessionId")
+    manager = CorrelationIdManager()
+    return manager.current(claude_session)
+
+
 def _record_audit(
     payload: dict,
     event_type: str,
@@ -981,6 +1020,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             tool_name=tool_name,
             metadata=base_metadata,
         )
+        _emit_pretooluse_context(payload, tool_name, tool_input)
         return {"suppressOutput": True}
 
     # Full path: existing preflight behavior, with severity escalation
@@ -1028,6 +1068,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             policy_name=policy_ref,
             metadata=full_metadata,
         )
+        _emit_pretooluse_context(payload, tool_name, tool_input)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -1053,6 +1094,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             policy_name=policy_ref,
             metadata=full_metadata,
         )
+        _emit_pretooluse_context(payload, tool_name, tool_input)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -1068,7 +1110,36 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         policy_name=policy_ref,
         metadata=full_metadata,
     )
+    _emit_pretooluse_context(payload, tool_name, tool_input)
     return {"suppressOutput": True}
+
+
+def _emit_pretooluse_context(
+    payload: dict,
+    tool_name: str | None,
+    tool_input: dict,
+) -> None:
+    """Best-effort fragment emission for a PreToolUse event."""
+    if not _context_store_enabled():
+        return
+    try:
+        from .context import fragments_from_tool_input
+
+        ctx = _hook_corr_context(payload, "PreToolUse")
+        _emit_context_fragments(
+            fragments_from_tool_input(
+                tool_name,
+                tool_input,
+                runner="claude_code",
+                session_id=ctx.rulence_session_id,
+                corr_id=ctx.corr_id,
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"warn: rulence context fragment extract failed: {exc}",
+            file=sys.stderr,
+        )
 
 
 def _escalate_action_for_risk(risk_level: str, preflight_verdict: str) -> str:
@@ -1118,6 +1189,26 @@ def _claude_code_userpromptsubmit(payload: dict) -> dict:
             metadata.update(_attempt_memory_read(prompt, scope=scope))
 
     _record_audit(payload, "UserPromptSubmit", metadata=metadata)
+
+    if prompt and _context_store_enabled():
+        try:
+            from .context import fragments_from_user_prompt
+
+            ctx = _hook_corr_context(payload, "UserPromptSubmit")
+            _emit_context_fragments(
+                fragments_from_user_prompt(
+                    prompt,
+                    runner="claude_code",
+                    session_id=ctx.rulence_session_id,
+                    corr_id=ctx.corr_id,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"warn: rulence context fragment extract failed: {exc}",
+                file=sys.stderr,
+            )
+
     return {"suppressOutput": True}
 
 
@@ -1132,7 +1223,16 @@ def _attempt_memory_read(query: str, *, scope: str, corr_id: str | None = None,
     try:
         from .memory import MemoryArbiter
 
-        result = MemoryArbiter().read(
+        context_store = None
+        if _context_store_enabled():
+            try:
+                from .context import ContextStore
+
+                context_store = ContextStore()
+            except Exception:  # pragma: no cover - defensive
+                context_store = None
+
+        result = MemoryArbiter(context_store=context_store).read(
             query,
             scope=scope,
             policy=policy_name,
@@ -1203,6 +1303,27 @@ def _claude_code_posttooluse(payload: dict) -> dict:
         tool_name=tool_name,
         metadata=metadata,
     )
+
+    if _context_store_enabled():
+        try:
+            from .context import fragments_from_tool_result
+
+            ctx = _hook_corr_context(payload, "PostToolUse")
+            _emit_context_fragments(
+                fragments_from_tool_result(
+                    tool_name,
+                    tool_output,
+                    runner="claude_code",
+                    session_id=ctx.rulence_session_id,
+                    corr_id=ctx.corr_id,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"warn: rulence context fragment extract failed: {exc}",
+                file=sys.stderr,
+            )
+
     return {"suppressOutput": True}
 
 
@@ -1285,6 +1406,25 @@ def _claude_code_stop(payload: dict) -> dict:
         evidence=review.evidence,
         metadata=metadata,
     )
+
+    if final_response and _context_store_enabled():
+        try:
+            from .context import fragments_from_final_response
+
+            ctx = _hook_corr_context(payload, "Stop")
+            _emit_context_fragments(
+                fragments_from_final_response(
+                    final_response,
+                    runner="claude_code",
+                    session_id=ctx.rulence_session_id,
+                    corr_id=ctx.corr_id,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"warn: rulence context fragment extract failed: {exc}",
+                file=sys.stderr,
+            )
 
     # Conservative continuation: only request a revision when the review
     # failed and Claude Code is not already inside a continuation. This

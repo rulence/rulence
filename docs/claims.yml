@@ -677,6 +677,41 @@ claims:
       - "cuts token costs"
     notes: "Token estimates exist; there are no measured savings benchmarks. Do not advertise savings."
 
+  - claim_id: context_fragments_store
+    claim_text: "Rulence stores structured context fragments derived from governed sessions and configured memory backends."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/fragment.py: ContextFragment and SourceRef"
+      - "src/rulence/context/store.py: ContextStore JSONL governance index"
+      - "src/rulence/context/snapshot.py: ContextSnapshot"
+      - "src/rulence/context/extract.py: fragments_from_user_prompt, fragments_from_tool_input, fragments_from_tool_result, fragments_from_honcho_memory_item, fragments_from_mempalace_memory_item, fragments_from_final_response, fragments_from_audit_event"
+      - "src/rulence/memory/arbiter.py: MemoryArbiter emits honcho/mempalace fragments when a context_store is supplied"
+      - "src/rulence/cli.py: hook handlers emit user_instruction, tool_input, tool_result, and final_response fragments under RULENCE_CONTEXT_STORE_ENABLED"
+    required_components:
+      - context_fragment_model
+      - context_store
+      - context_snapshot
+      - context_extract
+    acceptance_tests:
+      - tests.test_context_fragment
+      - tests.test_context_store
+      - tests.test_context_snapshot
+      - tests.test_context_extract
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence stores structured context fragments derived from governed sessions and configured memory backends"
+      - "context fragments with source provenance"
+      - "governance index for context fragments"
+    blocked_phrases:
+      - "Rulence replaces Honcho"
+      - "Rulence replaces MemPalace"
+      - "semantic retrieval"
+      - "embedding-based retrieval"
+      - "context compression"
+      - "cross-agent consistency"
+    notes: "M9 ships fragment, store, and snapshot primitives plus deterministic extraction at audit and memory boundaries. No embeddings, no semantic search, no compression, and no multi-agent bus. Honcho is the canonical internal memory backend; MemPalace is the canonical external memory backend."
+
   - claim_id: prevents_context_drift
     claim_text: "Rulence prevents context drift in agent conversations."
     category: context
