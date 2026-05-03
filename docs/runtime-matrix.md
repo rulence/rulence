@@ -75,6 +75,20 @@ implemented; see notes.
   ``decision: block`` once to request a revision; subsequent
   re-stops audit only. Rulence does not guarantee correct answers
   and does not prevent all hallucinations.
+- M11 adds ``rulence.context.AgentContextBus`` and ``TaskState``
+  for snapshot-based handoffs across supported agents.
+  ``rulence context snapshot``, ``rulence context handoff``, and
+  ``rulence context assemble`` (plus the matching MCP tools
+  ``rulence_context_snapshot``, ``rulence_context_handoff``,
+  ``rulence_context_assemble``) write to
+  ``~/.rulence/tasks/<task_id>/`` and reference snapshots from
+  ``ContextStore``. Conflict detection covers completion-with-open-blocker,
+  contradictory tool choices (``npm`` vs ``bun``, ``docker`` vs
+  ``podman``, etc.), memory negation against active decisions,
+  final-response violations of active forbids, and Honcho/MemPalace
+  disagreement. The bus is local-file only; there is no distributed
+  server, no team-wide replication, no vector DB, and no universal
+  runtime adapter.
 
 ## How to use this matrix
 

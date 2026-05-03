@@ -59,6 +59,12 @@ These are runtime-enforced or have tests covering current behavior:
 - `policy_regression_runner` — `rulence policy test`.
 - `mcp_stdio_server` — local MCP stdio server.
 - `memory_provider_health` — provider reachability checks.
+- `reproducible_local_evals` — `rulence eval run` discovers and runs the
+  cases under `evals/` and produces a JSON or Markdown report. The
+  claim verifier can require eval evidence with
+  `rulence claims verify --require-evals`. Evals are deterministic and
+  local; they are not a leaderboard or a substitute for measured
+  production behavior.
 
 ## Partial claims
 

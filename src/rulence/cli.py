@@ -217,10 +217,133 @@ def _main(argv: list[str] | None = None) -> int:
     claims_subparsers = claims_parser.add_subparsers(dest="claims_command", required=True)
     claims_verify = claims_subparsers.add_parser("verify", help="Validate docs/claims.yml and scan public copy.")
     claims_verify.add_argument("--root", help="Repository root. Defaults to the package root.")
+    claims_verify.add_argument(
+        "--require-evals",
+        action="store_true",
+        help="Also run the eval suite and fail if any supported claim has no passing eval evidence.",
+    )
     claims_verify.add_argument("--json", action="store_true", help="Print JSON output.")
     claims_list = claims_subparsers.add_parser("list", help="List claim ids and statuses.")
     claims_list.add_argument("--root", help="Repository root. Defaults to the package root.")
     claims_list.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Run reproducible local Rulence evals.",
+    )
+    eval_subparsers = eval_parser.add_subparsers(dest="eval_command", required=True)
+
+    eval_run = eval_subparsers.add_parser("run", help="Discover and run evals.")
+    eval_run.add_argument("--root", help="Evals root directory.")
+    eval_run.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        help="Limit to a category (repeatable).",
+    )
+    eval_run.add_argument(
+        "--claim",
+        action="append",
+        default=[],
+        help="Limit to evals tied to a specific claim id (repeatable).",
+    )
+    eval_run.add_argument(
+        "--out", help="Write the JSON report to this file."
+    )
+    eval_run.add_argument(
+        "--markdown", help="Write a Markdown report to this file."
+    )
+    eval_run.add_argument("--json", action="store_true")
+
+    eval_report = eval_subparsers.add_parser(
+        "report",
+        help="Print a JSON or Markdown summary from a previously written report.",
+    )
+    eval_report.add_argument("path", help="Path to a JSON eval report.")
+    eval_report.add_argument(
+        "--markdown", action="store_true", help="Print Markdown instead of JSON."
+    )
+
+    context_parser = subparsers.add_parser(
+        "context",
+        help="Manage shared task context, snapshots, and handoffs across supported agents.",
+    )
+    context_subparsers = context_parser.add_subparsers(dest="context_command", required=True)
+
+    context_init = context_subparsers.add_parser(
+        "init", help="Create a new task state."
+    )
+    context_init.add_argument("--task", help="Task id. Defaults to a generated id.")
+    context_init.add_argument("--goal", required=True, help="User goal text.")
+    context_init.add_argument(
+        "--policy-tier",
+        type=int,
+        default=1,
+        help="Policy tier hint stored in task metadata.",
+    )
+    context_init.add_argument("--json", action="store_true")
+
+    context_show = context_subparsers.add_parser(
+        "show", help="Print the current task state JSON."
+    )
+    context_show.add_argument("--task", required=True)
+    context_show.add_argument("--json", action="store_true")
+
+    context_list = context_subparsers.add_parser(
+        "list", help="List task ids that have local state."
+    )
+    context_list.add_argument("--json", action="store_true")
+
+    context_snapshot = context_subparsers.add_parser(
+        "snapshot",
+        help="Assemble and persist a context snapshot for a task.",
+    )
+    context_snapshot.add_argument("--task", required=True)
+    context_snapshot.add_argument(
+        "--max-tokens", type=int, default=4000, help="Token budget for assembly."
+    )
+    context_snapshot.add_argument(
+        "--no-compress", action="store_true", help="Skip deterministic compression."
+    )
+    context_snapshot.add_argument("--json", action="store_true")
+
+    context_handoff = context_subparsers.add_parser(
+        "handoff",
+        help="Hand a task off from one supported agent to another.",
+    )
+    context_handoff.add_argument("--task", required=True)
+    context_handoff.add_argument("--from", dest="from_agent", required=True)
+    context_handoff.add_argument("--to", dest="to_agent", required=True)
+    context_handoff.add_argument("--snapshot")
+    context_handoff.add_argument("--note")
+    context_handoff.add_argument("--json", action="store_true")
+
+    context_assemble = context_subparsers.add_parser(
+        "assemble",
+        help="Assemble (and optionally compress) the governed context for a task.",
+    )
+    context_assemble.add_argument("--task", required=True)
+    context_assemble.add_argument(
+        "--runner",
+        help="Hint for the target runner (e.g. claude-code, cursor). Recorded only.",
+    )
+    context_assemble.add_argument(
+        "--max-tokens", type=int, default=4000, help="Token budget for assembly."
+    )
+    context_assemble.add_argument(
+        "--no-compress", action="store_true", help="Skip deterministic compression."
+    )
+    context_assemble.add_argument("--json", action="store_true")
+
+    context_conflicts = context_subparsers.add_parser(
+        "conflicts", help="Run deterministic conflict detection over a task."
+    )
+    context_conflicts.add_argument("--task", required=True)
+    context_conflicts.add_argument(
+        "--final-response",
+        help="Optional final response text to compare against active constraints.",
+    )
+    context_conflicts.add_argument("--json", action="store_true")
 
     hook_parser = subparsers.add_parser("hook", help=argparse.SUPPRESS)
     hook_subparsers = hook_parser.add_subparsers(dest="hook_target", required=True)
@@ -592,7 +715,7 @@ def _main(argv: list[str] | None = None) -> int:
 
         root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
         if args.claims_command == "verify":
-            violations = verify_repo(root)
+            violations = verify_repo(root, require_evals=getattr(args, "require_evals", False))
             if args.json:
                 print(json.dumps([v.to_dict() for v in violations], indent=2, sort_keys=True))
             else:
@@ -625,6 +748,12 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"{row['claim_id']:40s} {row['status']:13s} {public:8s} {row['claim_text']}")
             return 0
 
+    if args.command == "eval":
+        return _eval_command(args)
+
+    if args.command == "context":
+        return _context_command(args)
+
     if args.command == "hook":
         if args.hook_target == "claude-code-pretooluse":
             print(json.dumps(_claude_code_pretooluse(sys.stdin.read()), sort_keys=True))
@@ -640,6 +769,184 @@ def _main(argv: list[str] | None = None) -> int:
         return mcp_main()
 
     return 1
+
+
+def _eval_command(args) -> int:
+    from .evals import EvalRunner, EvalReport
+
+    if args.eval_command == "run":
+        runner = EvalRunner(args.root)
+        report = runner.run(
+            categories=args.category or None,
+            claim_ids=args.claim or None,
+        )
+        payload = report.to_dict()
+        if args.out:
+            Path(args.out).expanduser().write_text(
+                json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        if args.markdown:
+            Path(args.markdown).expanduser().write_text(
+                report.to_markdown(), encoding="utf-8"
+            )
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(report.to_markdown())
+        return 0 if report.passed else 1
+
+    if args.eval_command == "report":
+        path = Path(args.path).expanduser()
+        if not path.exists():
+            print(f"error: report not found at {path}", file=sys.stderr)
+            return 2
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if args.markdown:
+            from .evals.runner import EvalReport as _EvalReport
+            report = _EvalReport(
+                started_at=data.get("started_at", ""),
+                finished_at=data.get("finished_at", ""),
+                results=tuple(),  # results decoded below
+                summary=dict(data.get("summary", {})),
+                metrics=dict(data.get("metrics", {})),
+            )
+            # Reconstruct results so the markdown rows render.
+            from .evals.runner import EvalResult as _EvalResult
+            decoded_results = []
+            for r in data.get("results") or []:
+                decoded_results.append(
+                    _EvalResult(
+                        eval_id=str(r.get("eval_id", "")),
+                        category=str(r.get("category", "")),
+                        claim_ids=tuple(r.get("claim_ids") or ()),
+                        status=str(r.get("status", "skip")),
+                        detail=str(r.get("detail", "")),
+                        metrics=dict(r.get("metrics") or {}),
+                        duration_ms=float(r.get("duration_ms") or 0.0),
+                        error=r.get("error"),
+                    )
+                )
+            report = _EvalReport(
+                started_at=report.started_at,
+                finished_at=report.finished_at,
+                results=tuple(decoded_results),
+                summary=report.summary,
+                metrics=report.metrics,
+            )
+            print(report.to_markdown())
+        else:
+            print(json.dumps(data, indent=2, sort_keys=True))
+        return 0
+
+    return 2
+
+
+def _context_command(args) -> int:
+    from .context import (
+        AgentContextBus,
+        ContextStore,
+        TaskNotFoundError,
+        TaskState,
+    )
+
+    bus = AgentContextBus(store=ContextStore())
+
+    if args.context_command == "init":
+        state = TaskState.new(
+            user_goal=args.goal,
+            task_id=args.task,
+            metadata={"policy_tier": int(args.policy_tier)},
+        )
+        bus.save_state(state)
+        _print(state.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "show":
+        try:
+            state = bus.load_state(args.task)
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(state.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "list":
+        ids = bus.list_tasks()
+        if getattr(args, "json", False):
+            print(json.dumps(ids, indent=2))
+        else:
+            for task_id in ids:
+                print(task_id)
+        return 0
+
+    if args.context_command == "snapshot":
+        try:
+            snapshot = bus.create_snapshot(
+                args.task,
+                max_tokens=args.max_tokens,
+                compress=not args.no_compress,
+            )
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(snapshot.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "handoff":
+        try:
+            record = bus.handoff(
+                from_agent=args.from_agent,
+                to_agent=args.to_agent,
+                task_id=args.task,
+                snapshot_id=args.snapshot,
+                note=args.note,
+            )
+        except (TaskNotFoundError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(record, getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "assemble":
+        try:
+            state = bus.load_state(args.task)
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        result = bus.assembler.assemble(
+            state.user_goal,
+            corr_id=args.task,
+            max_tokens=args.max_tokens,
+            policy_tier=int(state.metadata.get("policy_tier", 1) or 1),
+            current_constraints=state.active_constraints,
+            compress=not args.no_compress,
+            task_id=args.task,
+        )
+        bus.publish(
+            args.task,
+            event_type="context_assembled",
+            agent=args.runner,
+            data={
+                "snapshot_id": result.snapshot.snapshot_id,
+                "fragment_count": len(result.snapshot.fragment_ids),
+                "runner": args.runner,
+            },
+        )
+        _print(result.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "conflicts":
+        try:
+            report = bus.detect_conflicts(
+                args.task, final_response=args.final_response
+            )
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(report.to_dict(), getattr(args, "json", False))
+        return 0 if not report.has_conflicts else 1
+
+    return 2
 
 
 def _load_or_start_session(
@@ -850,6 +1157,45 @@ def _parse_hook_payload(raw_input: str) -> dict:
     return payload
 
 
+def _context_store_enabled() -> bool:
+    """Opt-in flag for M9 context fragment emission inside hooks.
+
+    Defaults to off so existing audit/session tests don't pick up
+    fragments in the user's home directory. Tests that exercise the
+    integration set ``RULENCE_CONTEXT_STORE_ENABLED=1`` along with
+    ``RULENCE_CONTEXT_DIR`` to pin storage to a tempdir.
+    """
+    flag = os.environ.get("RULENCE_CONTEXT_STORE_ENABLED", "")
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _emit_context_fragments(
+    fragments: tuple,
+) -> None:
+    """Append fragments to the configured ContextStore. Never raises."""
+    if not fragments:
+        return
+    if not _context_store_enabled():
+        return
+    try:
+        from .context import ContextStore
+
+        store = ContextStore()
+        for fragment in fragments:
+            store.add(fragment)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"warn: rulence context fragment write failed: {exc}", file=sys.stderr)
+
+
+def _hook_corr_context(payload: dict, event_type: str):
+    """Resolve the ``CorrelationContext`` for an event without mutating state."""
+    from .audit import CorrelationIdManager
+
+    claude_session = payload.get("session_id") or payload.get("sessionId")
+    manager = CorrelationIdManager()
+    return manager.current(claude_session)
+
+
 def _record_audit(
     payload: dict,
     event_type: str,
@@ -981,6 +1327,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             tool_name=tool_name,
             metadata=base_metadata,
         )
+        _emit_pretooluse_context(payload, tool_name, tool_input)
         return {"suppressOutput": True}
 
     # Full path: existing preflight behavior, with severity escalation
@@ -1028,6 +1375,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             policy_name=policy_ref,
             metadata=full_metadata,
         )
+        _emit_pretooluse_context(payload, tool_name, tool_input)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -1053,6 +1401,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             policy_name=policy_ref,
             metadata=full_metadata,
         )
+        _emit_pretooluse_context(payload, tool_name, tool_input)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -1068,7 +1417,36 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         policy_name=policy_ref,
         metadata=full_metadata,
     )
+    _emit_pretooluse_context(payload, tool_name, tool_input)
     return {"suppressOutput": True}
+
+
+def _emit_pretooluse_context(
+    payload: dict,
+    tool_name: str | None,
+    tool_input: dict,
+) -> None:
+    """Best-effort fragment emission for a PreToolUse event."""
+    if not _context_store_enabled():
+        return
+    try:
+        from .context import fragments_from_tool_input
+
+        ctx = _hook_corr_context(payload, "PreToolUse")
+        _emit_context_fragments(
+            fragments_from_tool_input(
+                tool_name,
+                tool_input,
+                runner="claude_code",
+                session_id=ctx.rulence_session_id,
+                corr_id=ctx.corr_id,
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"warn: rulence context fragment extract failed: {exc}",
+            file=sys.stderr,
+        )
 
 
 def _escalate_action_for_risk(risk_level: str, preflight_verdict: str) -> str:
@@ -1118,6 +1496,26 @@ def _claude_code_userpromptsubmit(payload: dict) -> dict:
             metadata.update(_attempt_memory_read(prompt, scope=scope))
 
     _record_audit(payload, "UserPromptSubmit", metadata=metadata)
+
+    if prompt and _context_store_enabled():
+        try:
+            from .context import fragments_from_user_prompt
+
+            ctx = _hook_corr_context(payload, "UserPromptSubmit")
+            _emit_context_fragments(
+                fragments_from_user_prompt(
+                    prompt,
+                    runner="claude_code",
+                    session_id=ctx.rulence_session_id,
+                    corr_id=ctx.corr_id,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"warn: rulence context fragment extract failed: {exc}",
+                file=sys.stderr,
+            )
+
     return {"suppressOutput": True}
 
 
@@ -1132,7 +1530,16 @@ def _attempt_memory_read(query: str, *, scope: str, corr_id: str | None = None,
     try:
         from .memory import MemoryArbiter
 
-        result = MemoryArbiter().read(
+        context_store = None
+        if _context_store_enabled():
+            try:
+                from .context import ContextStore
+
+                context_store = ContextStore()
+            except Exception:  # pragma: no cover - defensive
+                context_store = None
+
+        result = MemoryArbiter(context_store=context_store).read(
             query,
             scope=scope,
             policy=policy_name,
@@ -1203,6 +1610,27 @@ def _claude_code_posttooluse(payload: dict) -> dict:
         tool_name=tool_name,
         metadata=metadata,
     )
+
+    if _context_store_enabled():
+        try:
+            from .context import fragments_from_tool_result
+
+            ctx = _hook_corr_context(payload, "PostToolUse")
+            _emit_context_fragments(
+                fragments_from_tool_result(
+                    tool_name,
+                    tool_output,
+                    runner="claude_code",
+                    session_id=ctx.rulence_session_id,
+                    corr_id=ctx.corr_id,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"warn: rulence context fragment extract failed: {exc}",
+                file=sys.stderr,
+            )
+
     return {"suppressOutput": True}
 
 
@@ -1285,6 +1713,25 @@ def _claude_code_stop(payload: dict) -> dict:
         evidence=review.evidence,
         metadata=metadata,
     )
+
+    if final_response and _context_store_enabled():
+        try:
+            from .context import fragments_from_final_response
+
+            ctx = _hook_corr_context(payload, "Stop")
+            _emit_context_fragments(
+                fragments_from_final_response(
+                    final_response,
+                    runner="claude_code",
+                    session_id=ctx.rulence_session_id,
+                    corr_id=ctx.corr_id,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"warn: rulence context fragment extract failed: {exc}",
+                file=sys.stderr,
+            )
 
     # Conservative continuation: only request a revision when the review
     # failed and Claude Code is not already inside a continuation. This

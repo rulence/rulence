@@ -52,6 +52,29 @@ LIST_FIELDS: tuple[str, ...] = (
     "blocked_phrases",
 )
 
+# Claim categories that require a passing eval in the matching eval
+# category before the claim verifier will sign off on it. The verifier
+# only runs this check when explicitly asked (``require_evals=True``)
+# so unrelated CI runs do not need the eval suite to pass.
+CLAIM_CATEGORY_TO_EVAL_CATEGORY: dict[str, str] = {
+    "memory": "memory",
+    "context": "context",
+    "audit": "token",
+    "cross_runtime": "cross_agent",
+}
+
+# Per-claim overrides where the category mapping is too coarse. When a
+# claim id appears here, the verifier requires at least one passing
+# eval in the listed eval category, regardless of the claim's own
+# category. Unlisted claims fall back to ``CLAIM_CATEGORY_TO_EVAL_CATEGORY``.
+CLAIM_ID_TO_REQUIRED_EVAL_CATEGORY: dict[str, str] = {
+    "context_compression_local_benchmark": "context",
+    "context_assembly": "context",
+    "memory_arbitration_policy": "memory",
+    "shared_agent_context": "cross_agent",
+    "token_accounting": "token",
+}
+
 # A blocked phrase is allowed when the surrounding markdown section's nearest
 # preceding heading line contains one of these qualifiers.
 ROADMAP_QUALIFIERS: tuple[str, ...] = (
@@ -94,6 +117,11 @@ class Claim:
         return str(value) if value is not None else ""
 
     @property
+    def category(self) -> str:
+        value = self.raw.get("category")
+        return str(value) if value is not None else ""
+
+    @property
     def public_copy_allowed(self) -> Any:
         return self.raw.get("public_copy_allowed")
 
@@ -108,6 +136,11 @@ class Claim:
     @property
     def current_evidence(self) -> list[str]:
         return [str(p) for p in (self.raw.get("current_evidence") or []) if str(p)]
+
+    @property
+    def eval_evidence(self) -> list[str]:
+        """Eval ids the claim relies on, drawn from an optional ``eval_evidence`` list."""
+        return [str(p) for p in (self.raw.get("eval_evidence") or []) if str(p)]
 
 
 @dataclass(frozen=True)
@@ -342,8 +375,20 @@ def scan_file(path: Path, ledger: ClaimsLedger, root: Path | None = None) -> lis
     return violations
 
 
-def verify_repo(root: str | Path) -> list[Violation]:
-    """Run the full verification: schema + scan."""
+def verify_repo(
+    root: str | Path,
+    *,
+    require_evals: bool = False,
+    eval_report: Any = None,
+) -> list[Violation]:
+    """Run the full verification: schema + scan, plus optional eval gate.
+
+    When ``require_evals`` is True, the verifier additionally runs
+    :func:`validate_with_evals` against the supplied or freshly
+    generated :class:`rulence.evals.runner.EvalReport`. This is opt-in
+    so day-to-day ``rulence claims verify`` does not require the eval
+    suite to pass.
+    """
     repo = Path(root).expanduser().resolve()
     ledger_path = repo / "docs" / "claims.yml"
     if not ledger_path.exists():
@@ -358,7 +403,109 @@ def verify_repo(root: str | Path) -> list[Violation]:
     violations: list[Violation] = list(validate_ledger(ledger))
     for target in scan_targets(repo):
         violations.extend(scan_file(target, ledger, repo))
+    if require_evals:
+        report = eval_report
+        if report is None:
+            try:
+                from .evals import EvalRunner
+
+                report = EvalRunner().run()
+            except Exception as exc:
+                violations.append(
+                    Violation(
+                        file=str(ledger_path),
+                        line=0,
+                        message=f"could not run evals: {exc}",
+                    )
+                )
+                report = None
+        if report is not None:
+            violations.extend(validate_with_evals(ledger, report))
     return violations
+
+
+def validate_with_evals(ledger: ClaimsLedger, report: Any) -> list[Violation]:
+    """Require supported claims to have at least one passing eval in the
+    matching eval category.
+
+    ``report`` is duck-typed: any object exposing a ``results`` iterable
+    of items with ``status``, ``category``, and ``claim_ids`` attributes
+    (or string keys, when the report has been deserialized) works.
+    """
+    violations: list[Violation] = []
+    file_label = str(ledger.path) if ledger.path else "<ledger>"
+    passing = _index_passing_results(report)
+    for claim in ledger.claims:
+        if claim.status != "supported":
+            continue
+        required_eval_category = _required_eval_category(claim)
+        if required_eval_category is None:
+            continue
+        eval_passing_for_claim = passing.get((claim.claim_id, required_eval_category), 0)
+        category_passing = passing.get(("__any__", required_eval_category), 0)
+        explicit_evidence_ok = False
+        if claim.eval_evidence:
+            for eval_id in claim.eval_evidence:
+                if passing.get(("__id__", eval_id), 0) > 0:
+                    explicit_evidence_ok = True
+                    break
+        if eval_passing_for_claim == 0 and category_passing == 0 and not explicit_evidence_ok:
+            violations.append(
+                Violation(
+                    file=file_label,
+                    line=0,
+                    claim_id=claim.claim_id,
+                    message=(
+                        f"claim '{claim.claim_id}' (status=supported) needs at "
+                        f"least one passing eval in the '{required_eval_category}' "
+                        "category before it can advertise"
+                    ),
+                )
+            )
+    return violations
+
+
+def _required_eval_category(claim: Claim) -> str | None:
+    explicit = CLAIM_ID_TO_REQUIRED_EVAL_CATEGORY.get(claim.claim_id)
+    if explicit:
+        return explicit
+    return CLAIM_CATEGORY_TO_EVAL_CATEGORY.get(claim.category)
+
+
+def _index_passing_results(report: Any) -> dict[tuple[str, str], int]:
+    """Build a lookup of ``(claim_id, category) -> count`` of passing evals.
+
+    Two synthetic keys are also produced:
+    * ``("__any__", category)`` — number of passing evals in a category
+      regardless of which claim they map to.
+    * ``("__id__", eval_id)`` — set to 1 when the eval id passed.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    results = getattr(report, "results", None)
+    if results is None and isinstance(report, dict):
+        results = report.get("results") or ()
+    for result in results or ():
+        status = _attr_or_key(result, "status")
+        if status != "pass":
+            continue
+        category = str(_attr_or_key(result, "category") or "")
+        eval_id = str(_attr_or_key(result, "eval_id") or "")
+        claim_ids = _attr_or_key(result, "claim_ids") or ()
+        if category:
+            counts[("__any__", category)] = counts.get(("__any__", category), 0) + 1
+        if eval_id:
+            counts[("__id__", eval_id)] = 1
+        for claim_id in claim_ids:
+            counts[(str(claim_id), category)] = (
+                counts.get((str(claim_id), category), 0) + 1
+            )
+    return counts
+
+
+def _attr_or_key(obj: Any, name: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
 
 
 # ---------------------------------------------------------------------------

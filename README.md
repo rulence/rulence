@@ -607,6 +607,80 @@ about what's enforced and what isn't:
 - It is **not a substitute for the agent runner's own permissions**. Treat
   Rulence as one layer in defense-in-depth, not the layer.
 
+## Shared task context across supported agents
+
+Rulence keeps a small local task-state record per task so a second agent
+can pick up where the first one left off without rebuilding context from
+scratch. Honcho remains the canonical internal memory backend; MemPalace
+remains the canonical external memory backend — the local task state is
+a governance receipt, not a memory replacement.
+
+```bash
+# Create a task with a goal.
+rulence context init --task task_1 --goal "ship audit logging" --json
+
+# Assemble a snapshot from the configured ContextStore (M9 + M10).
+rulence context snapshot --task task_1 --json
+
+# Hand the task off to another supported agent. The handoff event
+# references the snapshot; the receiving agent can load the same state.
+rulence context handoff --task task_1 \
+  --from claude-code --to cursor --json
+
+# Inspect the assembled context for a specific runner. Compression is
+# deterministic and constraint-preserving.
+rulence context assemble --task task_1 --runner cursor --json
+
+# Run deterministic conflict detection against the task.
+rulence context conflicts --task task_1 \
+  --final-response "all set, ready to ship" --json
+```
+
+The same operations are exposed as MCP tools `rulence_context_snapshot`,
+`rulence_context_handoff`, and `rulence_context_assemble` so an MCP
+client can drive the handoff without going through the CLI. Local files
+live under `~/.rulence/tasks/<task_id>/`. There is no distributed
+server, no team-wide replication, and no universal runtime adapter.
+
+## Reproducible local evals
+
+Rulence ships a small, deterministic eval suite under `evals/` that
+exercises each category of claim. Cases run in well under a second on a
+laptop and produce a JSON or Markdown report.
+
+```bash
+# Run every eval and emit a JSON report.
+rulence eval run --json --out report.json
+
+# Pretty-print a Markdown summary from a previously written report.
+rulence eval report report.json --markdown
+
+# Filter by category or by the claim id an eval exercises.
+rulence eval run --category memory --category governance
+rulence eval run --claim shared_agent_context
+
+# Tie claim verification to the eval gate. The gate is opt-in.
+rulence claims verify --require-evals
+```
+
+Eval categories:
+
+- `governance/` — dangerous Bash denied, sensitive Read warned, memory
+  write routed through the arbiter, final-response violation detected,
+  low-risk hook latency.
+- `memory/` — Honcho internal read routed correctly, MemPalace external
+  read routed correctly, sensitive memory write denied, contradictory
+  memory items warned.
+- `context/` — relevant fragment selected, duplicate fragment removed,
+  required constraint preserved, compression reduces estimated tokens.
+- `token/` — audit token rollup, large tool result flagged, governance
+  overhead estimated.
+- `cross_agent/` — snapshot handoff, conflict detection, shared context
+  reuse.
+
+Tests are not a substitute for measured production behavior. The evals
+are honest local checks, not a benchmark leaderboard.
+
 ## Honest limitations
 
 This is not full formal verification yet. The MVP has a small explicit

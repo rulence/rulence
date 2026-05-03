@@ -65,6 +65,7 @@ class MemoryArbiter:
         *,
         providers: dict[str, _ProviderHandle] | None = None,
         redactor: SecretRedactor | None = None,
+        context_store: Any = None,
     ) -> None:
         self.providers = dict(providers or {})
         capabilities = {
@@ -72,6 +73,10 @@ class MemoryArbiter:
         }
         self.router = router or MemoryRouter(capabilities=capabilities)
         self.redactor = redactor or SecretRedactor()
+        # ``context_store`` is duck-typed (any object with an ``add``
+        # accepting a ``ContextFragment``) so this module does not need
+        # to import the context package at construction time.
+        self.context_store = context_store
 
     # ------------------------------------------------------------------
     # Reads
@@ -139,11 +144,49 @@ class MemoryArbiter:
                 degraded=True,
                 error=str(exc),
             )
+        items_tuple = tuple(items)
+        self._emit_memory_fragments(
+            items_tuple, backend=backend, corr_id=corr_id
+        )
         return MemoryReadResult(
-            items=tuple(items),
+            items=items_tuple,
             backend=backend,
             backend_role=decision.backend_role,
         )
+
+    # ------------------------------------------------------------------
+    # M9 context fragment integration
+
+    def _emit_memory_fragments(
+        self,
+        items: tuple,
+        *,
+        backend: str | None,
+        corr_id: str | None,
+    ) -> None:
+        """Best-effort fragment emission. Never raises."""
+        store = self.context_store
+        if store is None or not items or not backend:
+            return
+        try:
+            from ..context import (
+                fragments_from_honcho_memory_item,
+                fragments_from_mempalace_memory_item,
+            )
+
+            if backend == "honcho":
+                builder = fragments_from_honcho_memory_item
+            elif backend == "mempalace":
+                builder = fragments_from_mempalace_memory_item
+            else:
+                return
+            for item in items:
+                for fragment in builder(item, corr_id=corr_id):
+                    store.add(fragment)
+        except Exception:
+            # Fragment emission is governance-only; never break a
+            # memory read because the context index failed.
+            return
 
     # ------------------------------------------------------------------
     # Writes

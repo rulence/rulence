@@ -677,6 +677,160 @@ claims:
       - "cuts token costs"
     notes: "Token estimates exist; there are no measured savings benchmarks. Do not advertise savings."
 
+  - claim_id: context_fragments_store
+    claim_text: "Rulence stores structured context fragments derived from governed sessions and configured memory backends."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/fragment.py: ContextFragment and SourceRef"
+      - "src/rulence/context/store.py: ContextStore JSONL governance index"
+      - "src/rulence/context/snapshot.py: ContextSnapshot"
+      - "src/rulence/context/extract.py: fragments_from_user_prompt, fragments_from_tool_input, fragments_from_tool_result, fragments_from_honcho_memory_item, fragments_from_mempalace_memory_item, fragments_from_final_response, fragments_from_audit_event"
+      - "src/rulence/memory/arbiter.py: MemoryArbiter emits honcho/mempalace fragments when a context_store is supplied"
+      - "src/rulence/cli.py: hook handlers emit user_instruction, tool_input, tool_result, and final_response fragments under RULENCE_CONTEXT_STORE_ENABLED"
+    required_components:
+      - context_fragment_model
+      - context_store
+      - context_snapshot
+      - context_extract
+    acceptance_tests:
+      - tests.test_context_fragment
+      - tests.test_context_store
+      - tests.test_context_snapshot
+      - tests.test_context_extract
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence stores structured context fragments derived from governed sessions and configured memory backends"
+      - "context fragments with source provenance"
+      - "governance index for context fragments"
+    blocked_phrases:
+      - "Rulence replaces Honcho"
+      - "Rulence replaces MemPalace"
+      - "semantic retrieval"
+      - "embedding-based retrieval"
+      - "context compression"
+      - "cross-agent consistency"
+    notes: "M9 ships fragment, store, and snapshot primitives plus deterministic extraction at audit and memory boundaries. No embeddings, no semantic search, no compression, and no multi-agent bus. Honcho is the canonical internal memory backend; MemPalace is the canonical external memory backend."
+
+  - claim_id: context_assembly
+    claim_text: "Rulence assembles and budgets context from governed traces, Honcho memory, and MemPalace memory."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/relevance.py: RelevanceScorer with deterministic signals"
+      - "src/rulence/context/budgeter.py: ContextBudgeter preserves required fragments"
+      - "src/rulence/context/compressor.py: ContextCompressor with deterministic compression and validation"
+      - "src/rulence/context/assembler.py: ContextAssembler pipeline (gather, score, dedupe, budget, compress, snapshot)"
+    required_components:
+      - context_relevance_scorer
+      - context_budgeter
+      - context_compressor
+      - context_assembler
+    acceptance_tests:
+      - tests.test_context_relevance
+      - tests.test_context_budgeter
+      - tests.test_context_compressor
+      - tests.test_context_assembler
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence assembles and budgets context from governed traces, Honcho memory, and MemPalace memory"
+      - "deterministic context assembly and budgeting"
+      - "constraint-preserving context compression"
+    blocked_phrases:
+      - "semantic context assembly"
+      - "embedding-based context"
+      - "LLM context summarizer"
+      - "guarantees perfect relevance"
+    notes: "M10 ships deterministic relevance scoring (no embeddings), greedy required-first budgeting, deterministic compression that preserves constraints/decisions/blockers/memory provenance, and a snapshot-producing assembler. No LLM summarizer, no embeddings, no semantic search, no cross-agent bus."
+
+  - claim_id: context_compression_local_benchmark
+    claim_text: "Rulence reduces context size while preserving constraints and decisions in local benchmark cases."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/compressor.py: ContextCompressor.compress collapses repeats and truncates verbose tool output"
+      - "tests/test_context_compressor.py: BenchmarkReductionTests.test_compression_reduces_tokens_while_preserving_constraints"
+    required_components:
+      - context_compressor
+    acceptance_tests:
+      - tests.test_context_compressor
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence reduces context size while preserving constraints and decisions in local benchmark cases"
+      - "constraint-preserving local compression benchmark"
+      - "deterministic compression measured on local fixtures"
+    blocked_phrases:
+      - "guaranteed token savings"
+      - "always reduces tokens"
+      - "production token savings benchmark"
+    notes: "Token reduction is demonstrated on local deterministic fixtures (repeated logs, verbose tool output). It is not a production billing benchmark and not a guarantee. Compression validation is enforced: constraints, decisions, open questions, blockers, memory provenance, and source IDs must survive."
+
+  - claim_id: shared_agent_context
+    claim_text: "Rulence shares local task context across supported agents through governed snapshots."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/task_state.py: TaskState, Decision, Blocker"
+      - "src/rulence/context/bus.py: AgentContextBus (file-based) with publish/load_state/update_state/create_snapshot/handoff"
+      - "src/rulence/context/conflicts.py: deterministic conflict detection (completion vs open blocker, tool-choice conflict, memory vs decision, final vs constraint, internal vs external memory)"
+      - "src/rulence/cli.py: rulence context init/show/list/snapshot/handoff/assemble/conflicts subcommands"
+      - "src/rulence/mcp_server.py: rulence_context_snapshot, rulence_context_handoff, rulence_context_assemble MCP tools"
+    required_components:
+      - context_task_state
+      - context_bus
+      - context_conflict_detector
+      - context_assembler
+      - context_snapshot
+    acceptance_tests:
+      - tests.test_task_state
+      - tests.test_agent_context_bus
+      - tests.test_context_handoff
+      - tests.test_context_conflicts
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence shares local task context across supported agents through governed snapshots"
+      - "snapshot-based agent handoff"
+      - "local task state with deterministic conflict detection"
+    blocked_phrases:
+      - "Rulence coordinates all agents"
+      - "guarantees global consistency"
+      - "distributed agent bus"
+      - "enterprise sync"
+      - "Rulence replaces Honcho"
+      - "Rulence replaces MemPalace"
+    notes: "M11 ships local-file task state at ~/.rulence/tasks/<task_id>/state.json plus an events.jsonl, snapshot-based handoff that references existing ContextStore snapshots, deterministic conflict detection (open blocker vs completion claim, npm/bun-style tool choice, memory negation against decisions, final response vs active forbids, Honcho/MemPalace disagreement), and matching CLI + MCP surfaces. There is no distributed server, no enterprise sync, no vector DB, and no universal runtime adapter. Honcho stays the canonical internal memory backend; MemPalace stays the canonical external memory backend."
+
+  - claim_id: reproducible_local_evals
+    claim_text: "Rulence includes reproducible local evals for governance, memory routing, token estimates, and context budgeting."
+    category: audit
+    status: supported
+    current_evidence:
+      - "src/rulence/evals/runner.py: EvalRunner discovers and runs eval cases"
+      - "evals/governance/: dangerous-bash, sensitive-read, memory-write-routing, final-response-violation, low-risk hook latency"
+      - "evals/memory/: Honcho/MemPalace routing, sensitive write denied, contradictory memory warned"
+      - "evals/context/: relevance, dedupe, constraint preservation, token reduction"
+      - "evals/token/: audit token rollup, large tool result flagging, governance overhead"
+      - "evals/cross_agent/: snapshot handoff, conflict detection, shared context reuse"
+      - "src/rulence/claims.py: validate_with_evals ties supported claims to passing evals when --require-evals is set"
+      - "src/rulence/cli.py: rulence eval run / report subcommands"
+    required_components:
+      - eval_runner
+      - claim_eval_evidence_check
+    acceptance_tests:
+      - tests.test_eval_runner
+      - tests.test_claims_eval_integration
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence includes reproducible local evals for governance, memory routing, token estimates, and context budgeting"
+      - "claim verification can require passing evals"
+      - "rulence eval run produces a JSON or Markdown report"
+    blocked_phrases:
+      - "state-of-the-art"
+      - "guaranteed token reduction"
+      - "all-agent consistency"
+      - "public leaderboard"
+    notes: "Evals are small, local, and deterministic. They live under evals/<category>/ and run in well under a second on a laptop. The verifier's eval gate is opt-in via rulence claims verify --require-evals so day-to-day docs work does not require the eval suite to pass. There is no public leaderboard, no synthetic inflated benchmark, and no LLM-judge eval."
+
   - claim_id: prevents_context_drift
     claim_text: "Rulence prevents context drift in agent conversations."
     category: context
