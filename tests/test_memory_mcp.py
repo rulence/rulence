@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from rulence.cli import main as cli_main
 from rulence.config import HonchoConfig, MempalaceConfig, MemoryConfig, load_memory_config
 from rulence.mcp_client import close_all_clients
 from rulence.memory import MempalaceMcpProvider, MemoryItem, _dedup_by_text, memory_health, retrieve_combined
@@ -105,6 +109,37 @@ order = ["honcho", "mempalace"]
         self.assertIsNotNone(response)
         text = response["result"]["content"][0]["text"]
         self.assertIn("reachable", text)
+
+    def test_cli_memory_wings_reports_missing_mempalace_without_crashing(self) -> None:
+        config = MemoryConfig(mempalace=MempalaceConfig(command="/nonexistent/mempalace-mcp"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("rulence.memory.load_memory_config", return_value=config):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = cli_main(["memory", "wings", "--json"])
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["reachable"])
+        self.assertIn("command not found", payload["error"])
+        self.assertEqual(payload["wings"], [])
+
+    def test_cli_memory_rooms_reports_missing_mempalace_without_crashing(self) -> None:
+        config = MemoryConfig(mempalace=MempalaceConfig(command="/nonexistent/mempalace-mcp"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("rulence.memory.load_memory_config", return_value=config):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = cli_main(["memory", "rooms", "--wing", "ops", "--json"])
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["reachable"])
+        self.assertIn("command not found", payload["error"])
+        self.assertEqual(payload["wing"], "ops")
+        self.assertEqual(payload["rooms"], [])
 
     def test_retrieve_combined_keeps_working_for_local_provider(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

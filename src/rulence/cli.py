@@ -11,7 +11,16 @@ from .config import write_default_memory_config
 from .decomposer import decompose_prompt
 from .doctor import run_doctor
 from .feedback import read_feedback, record_feedback, summarize_feedback
-from .memory import memory_health, memory_items_to_context, mempalace_rooms, mempalace_wings, retrieve_combined, retrieve_memory
+from .mcp_client import McpError
+from .memory import (
+    MemoryProviderError,
+    memory_health,
+    memory_items_to_context,
+    mempalace_rooms,
+    mempalace_wings,
+    retrieve_combined,
+    retrieve_memory,
+)
 from .models import ReasoningSession
 from .policy_cases import run_policy_cases
 from .policies import (
@@ -410,13 +419,29 @@ def _main(argv: list[str] | None = None) -> int:
             _print_memory_payload(memory_health(args.provider or "all", path=args.path), args.json)
             return 0
         if args.target == "wings":
-            _print_memory_payload(mempalace_wings(), args.json)
+            try:
+                wings = mempalace_wings()
+            except (McpError, MemoryProviderError) as exc:
+                _print_memory_payload(
+                    {"provider": "mempalace", "reachable": False, "transport": "mcp", "wings": [], "error": str(exc)},
+                    args.json,
+                )
+                return 1
+            _print_memory_payload(wings, args.json)
             return 0
         if args.target == "rooms":
             if not args.wing:
                 print("memory rooms requires --wing", file=sys.stderr)
                 return 2
-            _print_memory_payload(mempalace_rooms(args.wing), args.json)
+            try:
+                rooms = mempalace_rooms(args.wing)
+            except (McpError, MemoryProviderError) as exc:
+                _print_memory_payload(
+                    {"provider": "mempalace", "reachable": False, "transport": "mcp", "wing": args.wing, "rooms": [], "error": str(exc)},
+                    args.json,
+                )
+                return 1
+            _print_memory_payload(rooms, args.json)
             return 0
         if not args.target or not args.provider:
             print("memory requires QUERY and --provider, or one of: health, wings, rooms", file=sys.stderr)
