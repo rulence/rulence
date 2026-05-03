@@ -6,6 +6,8 @@ from typing import Any, BinaryIO
 
 FramedMessage = tuple[dict[str, Any] | None, str]
 
+MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+
 
 def read_message(stream: BinaryIO) -> FramedMessage:
     first = stream.readline()
@@ -25,9 +27,17 @@ def read_message(stream: BinaryIO) -> FramedMessage:
         if not line:
             return None, "headers"
 
-    length = int(headers.get("content-length", "0"))
+    raw_length = headers.get("content-length", "")
+    try:
+        length = int(raw_length)
+    except ValueError as exc:
+        raise ValueError(f"invalid Content-Length header: {raw_length!r}") from exc
     if length <= 0:
         raise ValueError("invalid or missing Content-Length header")
+    if length > MAX_MESSAGE_BYTES:
+        raise ValueError(
+            f"Content-Length {length} exceeds MAX_MESSAGE_BYTES ({MAX_MESSAGE_BYTES})"
+        )
     raw = stream.read(length)
     return json.loads(raw.decode("utf-8")), "headers"
 

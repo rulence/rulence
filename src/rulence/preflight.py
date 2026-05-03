@@ -6,6 +6,7 @@ from .decomposer import decompose_prompt
 from .models import PreflightResult
 from .policies import CHECK_BUDGET, DEFAULT_POLICIES, load_policy
 from .token_budget import build_token_budget
+from .transcript import TranscriptTurn, parse_transcript_text
 
 
 def preflight_task(
@@ -13,6 +14,7 @@ def preflight_task(
     memory: str = "",
     policy_dir: str | None = None,
     model: str | None = None,
+    transcript: str | None = None,
 ) -> PreflightResult:
     if not task.strip():
         raise ValueError("task cannot be empty")
@@ -23,8 +25,18 @@ def preflight_task(
     decomposition = None
     if word_count > policy.decompose_threshold:
         decomposition = decompose_prompt(task, max_depth=policy.decompose_max_depth)
+    transcript_turns: tuple[TranscriptTurn, ...] = parse_transcript_text(transcript) if transcript else ()
     checks = tuple(
-        run_check(name, task, memory, classification, policy, model=model, decomposition=decomposition)
+        run_check(
+            name,
+            task,
+            memory,
+            classification,
+            policy,
+            model=model,
+            decomposition=decomposition,
+            transcript_turns=transcript_turns,
+        )
         for name in policy.required_checks
     )
 

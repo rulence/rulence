@@ -2,13 +2,16 @@
 
 Value in Consistency.
 
-**Portable governance for AI agents.**
+**A local policy layer for AI agents.**
 
-One local policy layer for Claude Code, Cursor, n8n, and every MCP-compatible
-agent.
+One CLI + MCP server for Claude Code, Cursor, n8n, and other MCP-compatible
+runners. Real PreToolUse enforcement on Claude Code; advisory-only for Cursor
+and n8n (model has to choose to call preflight). See
+[What Rulence does not do](#what-rulence-does-not-do) before relying on it as
+a security boundary.
 
 > Sequential Thinking is the protocol your agent uses to think.
-> Rulence is the protocol your team uses to govern every agent.
+> Rulence is the local advisory layer you use to keep that thinking in policy.
 
 The MVP gives an agent one first call before it acts:
 
@@ -164,9 +167,16 @@ rulence policy list-available
 rulence policy install secrets git migrations aws payments
 ```
 
-If multiple policy files exist for the same tier, Rulence merges them. Checks,
-warnings, blocks, and constraints are unioned so installed starter policies
-compose instead of shadowing each other.
+If multiple policy files exist for the same tier, Rulence merges them so
+installed starter policies compose instead of shadowing each other:
+
+- `required_checks`, `warn_if`, `block_if`, `constraints` — **unioned**
+  (de-duplicated, order preserved).
+- `decompose_threshold` — **min** wins. Lower threshold = stricter, so the
+  most cautious policy decides when to force decomposition.
+- `decompose_max_depth` — **max** wins. Higher depth = more permissive
+  decomposition; the policy that allows the deepest breakdown decides the cap.
+- `label` — concatenated with `+` for traceability (`secrets+complex`).
 
 Policy files are TOML:
 
@@ -275,7 +285,7 @@ Local npm package config:
     "rulence": {
       "command": "node",
       "args": [
-        "/Users/aumordecade/Desktop/Rulence MVP/src-js/mcp-server.js"
+        "<path-to-rulence-checkout>/src-js/mcp-server.js"
       ]
     }
   }
@@ -310,10 +320,16 @@ rulence install cursor --dir .
 rulence install n8n
 ```
 
-`claude-code` installs an executable PreToolUse gate. `cursor` writes a project
-rule, and `n8n` prints MCP server config to paste into n8n; those runners enforce
-Rulence when their agent/workflow calls the configured rule or MCP tool before
-acting.
+Enforcement varies by runner:
+
+- `claude-code` installs an executable PreToolUse hook. The runner itself
+  blocks the tool call until Rulence returns — this is real gating.
+- `cursor` writes a project rule into `.cursor/rules/rulence.md`. The model is
+  instructed to call `rulence preflight` before acting, but compliance depends
+  on the model. Treat this as an advisory nudge, not a hard gate.
+- `n8n` prints MCP server config to paste in. Whether the workflow actually
+  calls the tool before its destructive node runs is up to how the workflow is
+  wired.
 
 ## How this replaces Sequential Thinking
 
@@ -373,14 +389,80 @@ forbids(migration, backup)
 The Decomposer also recognizes conservative natural-language constraints:
 
 ```text
-Auth must use JWT
-Don't log credentials
-Never auth with JWT
+Auth must use JWT             # requires(Auth, JWT)
+Don't log credentials         # forbids(log, credentials)
+Never auth with JWT           # forbids(auth, JWT)
+Never migrate without backup  # requires(migrate, backup)  -- double negative
+Don't deploy unless tested    # requires(deploy, tested)   -- double negative
 ```
+
+Patterns that don't match (any "Don't / Never X (with|in|on|using|for|without|
+unless) Y" or "X must Y" form) are silently ignored rather than guessed at, so
+ambiguous prose doesn't produce wrong constraints.
 
 The `constraint_solver` check blocks only when the same condition and target are
 both required and forbidden. Broad prose contradictions remain warnings because
 they are heuristic.
+
+## Transcript-aware checks
+
+When the conversation transcript is available, three opt-in checks let the
+preflight reason about it:
+
+- `transcript_drift` — warns when the current task shares no keywords with the
+  first user turn. Signals the agent has wandered away from the original goal.
+- `transcript_contradiction` — extracts constraints from the transcript and
+  blocks if the current task references both sides of a `forbids(X, Y)` from
+  earlier in the conversation. Warns when a `requires(X, Y)` is unmet.
+- `transcript_staleness` — lists transcript turns whose keywords no longer
+  overlap with the current task. Pure suggestion, never blocks.
+
+These are deterministic exact-match heuristics — no model dependency. Add them
+to a tier policy to enable:
+
+```toml
+tier = 4
+label = "complex"
+required_checks = ["memory_check", "consistency_check", "transcript_contradiction", "transcript_drift"]
+warn_if = []
+block_if = []
+```
+
+Pass the transcript any of these ways. All paths cap at 1 MB:
+
+```bash
+rulence preflight "deploy on friday" --transcript ./conversation.jsonl
+cat conversation.jsonl | rulence preflight "deploy on friday" --transcript-stdin
+
+# MCP arg (inline or path):
+{"name": "rulence_preflight",
+ "arguments": {"task": "...", "transcript": "..."}}
+{"name": "rulence_preflight",
+ "arguments": {"task": "...", "transcript_path": "/path/to/conversation.jsonl"}}
+```
+
+If the policy lists a transcript-aware check but no transcript is supplied, the
+check passes quietly with `"no transcript provided"` rather than failing — so a
+single policy file works whether or not the runner has transcript access.
+
+**Claude Code automatic pickup:** the PreToolUse hook payload already carries
+`transcript_path` on every call. The bundled hook handler reads it
+automatically — no installer flag, no config. Add the checks to a policy and
+they activate the next time Claude Code runs the hook.
+
+Supported transcript formats:
+- JSONL with `{"role": "user|assistant|system|tool", "content": "..."}` per line
+- JSONL with `content` as a list of `{"type": "text", "text": "..."}` blocks
+  (extracts text-type blocks, ignores tool_use)
+- Claude Code's nested `{"type": "user", "message": {...}}` form
+- Plain text (treated as a single user turn)
+
+Malformed JSONL falls back to plain text so a partially corrupt file still
+produces something usable.
+
+**Privacy note:** transcripts fed into Rulence reach process memory and, if a
+`--session-id` is used, may end up on disk in the trace JSON. Don't pipe in
+secrets you don't want persisted alongside the trace.
 
 ## Development checks
 
@@ -450,6 +532,31 @@ Release files are included but publishing is intentionally manual:
 
 Publishing requires configuring `NPM_TOKEN`, `PYPI_API_TOKEN`, and GitHub
 package permissions.
+
+## What Rulence does not do
+
+Rulence is a **local advisory layer**, not a sandbox. Be explicit with yourself
+about what's enforced and what isn't:
+
+- It does **not** intercept tool calls on its own. Enforcement comes from the
+  host runner's hook system. Today only the Claude Code installer wires a real
+  PreToolUse gate; Cursor and n8n integrations are advisory.
+- Policy files in `~/.rulence/policies` are **user-writable**. The same agent
+  or user being "governed" can edit them. This is a guardrail for honest
+  mistakes, not a defense against an adversarial user on the same machine.
+- There is **no team policy distribution, signing, or central audit**. Traces
+  in `~/.rulence/sessions` are local JSON files and are also user-writable.
+- There is **no built-in access control or secret redaction**. If you pass a
+  task string or transcript containing secrets, Rulence sees them, runs them
+  through the configured checks, and may persist them in trace files.
+- It does **not** auto-summarize or prune the agent's conversation. The
+  transcript-aware checks (above) inspect what they're given and suggest
+  pruning; rewriting the agent's working context is the runner's job.
+- Conversation visibility is **opt-in**. Without `--transcript`,
+  `transcript_path`, or the Claude Code hook auto-pickup, Rulence sees only
+  the current task string and any memory the caller fetched.
+- It is **not a substitute for the agent runner's own permissions**. Treat
+  Rulence as one layer in defense-in-depth, not the layer.
 
 ## Honest limitations
 

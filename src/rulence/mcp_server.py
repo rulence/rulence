@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from ._jsonrpc import read_message, write_message
 from .classifier import classify_task
 from .decomposer import decompose_prompt
+from .transcript import MAX_TRANSCRIPT_BYTES
 from .memory import memory_health, mempalace_rooms, mempalace_wings
 from .preflight import preflight_task
 from .reasoning import add_thought, start_session, summarize_session
@@ -16,6 +18,10 @@ from .sessions import SessionStore
 
 SERVER_INFO = {"name": "rulence", "version": "0.3.0"}
 SEQUENTIAL_SESSION_ID = "__sequentialthinking__"
+
+
+class InvalidParamsError(ValueError):
+    """Raised when an MCP tool call has missing or invalid parameters."""
 
 
 def main() -> int:
@@ -58,6 +64,8 @@ def handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
             return _result(request_id, _call_tool(params.get("name"), params.get("arguments", {})))
 
         return _error(request_id, -32601, f"method not found: {method}")
+    except InvalidParamsError as exc:
+        return _error(request_id, -32602, str(exc))
     except Exception as exc:  # pragma: no cover - defensive server boundary
         return _error(request_id, -32603, str(exc))
 
@@ -79,6 +87,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             task,
             memory=str(arguments.get("memory", "")),
             policy_dir=arguments.get("policy_dir"),
+            transcript=_optional_transcript(arguments),
         ).to_dict()
     elif name == "rulence_start_thinking":
         task = _required_text(arguments, "task")
@@ -87,13 +96,14 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             memory=str(arguments.get("memory", "")),
             policy_dir=arguments.get("policy_dir"),
             session_id=arguments.get("session_id"),
+            transcript=_optional_transcript(arguments),
         )
         store.save(session)
         payload = session.to_dict()
     elif name == "rulence_think":
         session_id = _required_text(arguments, "session_id")
         if not store.exists(session_id):
-            raise ValueError(f"unknown session_id: {session_id}")
+            raise InvalidParamsError(f"unknown session_id: {session_id}")
         session = add_thought(
             store.load(session_id),
             _required_text(arguments, "thought"),
@@ -111,7 +121,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     elif name == "rulence_trace":
         session_id = _required_text(arguments, "session_id")
         if not store.exists(session_id):
-            raise ValueError(f"unknown session_id: {session_id}")
+            raise InvalidParamsError(f"unknown session_id: {session_id}")
         session = store.load(session_id)
         payload = {
             "summary": summarize_session(session),
@@ -126,7 +136,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     elif name == "sequentialthinking":
         return _sequentialthinking(arguments)
     else:
-        raise ValueError(f"unknown tool: {name}")
+        raise InvalidParamsError(f"unknown tool: {name}")
 
     return {
         "content": [
@@ -221,6 +231,8 @@ def _tools() -> list[dict[str, Any]]:
                     "task": {"type": "string", "description": "Task the agent is about to perform."},
                     "memory": {"type": "string", "description": "Optional local memory/context."},
                     "policy_dir": {"type": "string", "description": "Optional local policy directory."},
+                    "transcript": {"type": "string", "description": "Optional conversation transcript (JSONL or plain text) for transcript-aware checks."},
+                    "transcript_path": {"type": "string", "description": "Optional path to a transcript file. Read server-side; ignored if transcript is also supplied."},
                 },
                 "required": ["task"],
             },
@@ -235,6 +247,8 @@ def _tools() -> list[dict[str, Any]]:
                     "memory": {"type": "string", "description": "Optional local memory/context."},
                     "policy_dir": {"type": "string", "description": "Optional local policy directory."},
                     "session_id": {"type": "string", "description": "Optional caller-provided session id."},
+                    "transcript": {"type": "string", "description": "Optional conversation transcript (JSONL or plain text) for transcript-aware checks."},
+                    "transcript_path": {"type": "string", "description": "Optional path to a transcript file. Read server-side; ignored if transcript is also supplied."},
                 },
                 "required": ["task"],
             },
@@ -376,10 +390,28 @@ def _log_thought(
     print(f"[rulence:{label}] {thought}", file=sys.stderr)
 
 
+def _optional_transcript(arguments: dict[str, Any]) -> str | None:
+    inline = arguments.get("transcript")
+    if isinstance(inline, str) and inline.strip():
+        return inline
+    raw_path = arguments.get("transcript_path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    path = Path(raw_path).expanduser()
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        if path.stat().st_size > MAX_TRANSCRIPT_BYTES:
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _required_text(arguments: dict[str, Any], key: str) -> str:
     value = str(arguments.get(key, ""))
     if not value.strip():
-        raise ValueError(f"tool argument '{key}' is required")
+        raise InvalidParamsError(f"tool argument '{key}' is required")
     return value
 
 
@@ -387,7 +419,10 @@ def _optional_int(arguments: dict[str, Any], key: str) -> int | None:
     value = arguments.get(key)
     if value is None:
         return None
-    return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidParamsError(f"tool argument '{key}' must be an integer") from exc
 
 
 def _result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:

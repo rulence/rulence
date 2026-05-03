@@ -42,7 +42,16 @@ N8N_CONFIG = {
 def install_claude_code(force: bool = False) -> dict[str, Any]:
     settings = Path.home() / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True, exist_ok=True)
-    data = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
+    if settings.exists():
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{settings} is not valid JSON ({exc.msg} at line {exc.lineno}). "
+                "Move it aside or fix it, then re-run."
+            ) from exc
+    else:
+        data = {}
     hooks = data.setdefault("hooks", {})
     pre_tool_use = hooks.setdefault("PreToolUse", [])
 

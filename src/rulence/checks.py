@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable
 
 from .models import CheckResult, Classification, Policy, TaskDAG
-from .logic import evaluate_policy_constraints, find_constraint_conflicts
+from .logic import evaluate_policy_constraints, find_constraint_conflicts, parse_constraints
 from .policies import (
     CHECK_APPROVAL,
     CHECK_BUDGET,
@@ -14,9 +14,13 @@ from .policies import (
     CHECK_DECOMPOSITION,
     CHECK_MEMORY,
     CHECK_TOOL,
+    CHECK_TRANSCRIPT_CONTRADICTION,
+    CHECK_TRANSCRIPT_DRIFT,
+    CHECK_TRANSCRIPT_STALENESS,
     KNOWN_CHECKS,
 )
 from .token_budget import build_token_budget
+from .transcript import TranscriptTurn
 
 CONTRADICTION_PATTERNS = (
     ("always", "never"),
@@ -46,6 +50,7 @@ def run_check(
     policy: Policy,
     model: str | None = None,
     decomposition: TaskDAG | None = None,
+    transcript_turns: tuple[TranscriptTurn, ...] = (),
 ) -> CheckResult:
     if name in CUSTOM_CHECKS:
         return CUSTOM_CHECKS[name](task, memory, classification, policy, model)
@@ -123,7 +128,120 @@ def run_check(
     if name == CHECK_APPROVAL:
         return CheckResult(name, "block", "high-risk tier requires explicit user approval")
 
+    if name == CHECK_TRANSCRIPT_DRIFT:
+        return _transcript_drift_check(task, transcript_turns)
+
+    if name == CHECK_TRANSCRIPT_CONTRADICTION:
+        return _transcript_contradiction_check(task, transcript_turns)
+
+    if name == CHECK_TRANSCRIPT_STALENESS:
+        return _transcript_staleness_check(task, transcript_turns)
+
     return CheckResult(name, "warn", f"unknown check '{name}'")
+
+
+_KEYWORD_PATTERN = re.compile(r"[a-z][a-z0-9_-]{2,}")
+_STOPWORDS = frozenset(
+    """
+    the and for with that this from your into about have been will should could
+    just only also when then than because they them their there here over under
+    using able very more much such been being were was are can may might want
+    """.split()
+)
+
+
+def _keywords(text: str) -> set[str]:
+    return {token for token in _KEYWORD_PATTERN.findall(text.lower()) if token not in _STOPWORDS}
+
+
+def _transcript_drift_check(task: str, turns: tuple[TranscriptTurn, ...]) -> CheckResult:
+    name = CHECK_TRANSCRIPT_DRIFT
+    if not turns:
+        return CheckResult(name, "pass", "no transcript provided")
+
+    first_user = next((turn for turn in turns if turn.role == "user"), None)
+    if first_user is None:
+        return CheckResult(name, "pass", "transcript has no user turn to compare against")
+
+    original = _keywords(first_user.content)
+    current = _keywords(task)
+    if not original or not current:
+        return CheckResult(name, "pass", "no keyword signal to compare")
+
+    overlap = original & current
+    if overlap:
+        return CheckResult(
+            name,
+            "pass",
+            f"current task shares {len(overlap)} keyword(s) with the original goal",
+            tuple(sorted(overlap))[:5],
+        )
+
+    return CheckResult(
+        name,
+        "warn",
+        "current task shares no keywords with the original user goal; possible drift",
+        tuple(sorted(current))[:5],
+    )
+
+
+def _transcript_contradiction_check(task: str, turns: tuple[TranscriptTurn, ...]) -> CheckResult:
+    name = CHECK_TRANSCRIPT_CONTRADICTION
+    if not turns:
+        return CheckResult(name, "pass", "no transcript provided")
+
+    transcript_text = "\n".join(turn.content for turn in turns)
+    transcript_constraints = parse_constraints(transcript_text)
+    if not transcript_constraints:
+        return CheckResult(name, "pass", "no constraints found in transcript")
+
+    task_lower = task.lower()
+    violations: list[str] = []
+    for constraint in transcript_constraints:
+        condition = constraint.condition.lower()
+        target = constraint.target.lower()
+        if not condition or not target:
+            continue
+        if condition not in task_lower:
+            continue
+        if constraint.kind == "forbids" and target in task_lower:
+            violations.append(
+                f"transcript said forbids({constraint.condition}, {constraint.target}); current task references both"
+            )
+        elif constraint.kind == "requires" and target not in task_lower:
+            violations.append(
+                f"transcript said requires({constraint.condition}, {constraint.target}); current task does not mention {constraint.target}"
+            )
+
+    if any(v.startswith("transcript said forbids") for v in violations):
+        return CheckResult(name, "block", "current task contradicts a transcript constraint", tuple(violations))
+    if violations:
+        return CheckResult(name, "warn", "transcript constraint not yet satisfied", tuple(violations))
+    return CheckResult(name, "pass", f"task is consistent with {len(transcript_constraints)} transcript constraint(s)")
+
+
+def _transcript_staleness_check(task: str, turns: tuple[TranscriptTurn, ...]) -> CheckResult:
+    name = CHECK_TRANSCRIPT_STALENESS
+    if not turns:
+        return CheckResult(name, "pass", "no transcript provided")
+
+    current = _keywords(task)
+    if not current:
+        return CheckResult(name, "pass", "no keyword signal in current task")
+
+    stale_indices: list[str] = []
+    for turn in turns:
+        if not _keywords(turn.content) & current:
+            stale_indices.append(f"turn {turn.index} ({turn.role})")
+
+    if not stale_indices:
+        return CheckResult(name, "pass", "all transcript turns share keywords with the current task")
+
+    if len(stale_indices) >= len(turns):
+        detail = "every transcript turn appears unrelated to the current task"
+    else:
+        detail = f"{len(stale_indices)} of {len(turns)} transcript turn(s) appear unrelated; consider pruning"
+    return CheckResult(name, "warn", detail, tuple(stale_indices[:8]))
 
 
 def find_contradictions(text: str) -> list[str]:

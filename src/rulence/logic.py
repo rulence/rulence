@@ -105,16 +105,42 @@ def _parse_constraint(line: str, source_index: int | None = None) -> Constraint 
     if must:
         return Constraint("requires", must.group("condition").strip(), must.group("target").strip(), source_index)
 
+    double_negative = re.search(
+        r"\b(?:don'?t|do\s+not|must\s+not|never)\s+"
+        r"(?P<condition>[\w-]+)"
+        r"\s+(?:without|unless)\s+"
+        r"(?P<target>[\w-]+)\b",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if double_negative:
+        return Constraint(
+            "requires",
+            double_negative.group("condition").strip(),
+            double_negative.group("target").strip(),
+            source_index,
+        )
+
     negative = re.search(
         r"\b(?:don'?t|do\s+not|must\s+not|never)\s+"
         r"(?P<condition>[\w-]+)"
-        r"(?:\s+(?:with|in|on|using|for)\s+|\s+)"
+        r"\s+(?:with|in|on|using|for)\s+"
         r"(?P<target>[\w-]+)\b",
         line,
         flags=re.IGNORECASE,
     )
     if negative:
         return Constraint("forbids", negative.group("condition").strip(), negative.group("target").strip(), source_index)
+
+    bare_negative = re.search(
+        r"\b(?:don'?t|do\s+not|must\s+not|never)\s+"
+        r"(?P<condition>[\w-]+)\s+"
+        r"(?P<target>[\w-]+)\b",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if bare_negative:
+        return Constraint("forbids", bare_negative.group("condition").strip(), bare_negative.group("target").strip(), source_index)
 
     return None
 

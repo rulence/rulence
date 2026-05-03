@@ -13,8 +13,9 @@ def start_session(
     policy_dir: str | None = None,
     model: str | None = None,
     session_id: str | None = None,
+    transcript: str | None = None,
 ) -> ReasoningSession:
-    preflight = preflight_task(task, memory=memory, policy_dir=policy_dir, model=model)
+    preflight = preflight_task(task, memory=memory, policy_dir=policy_dir, model=model, transcript=transcript)
     warnings = preflight.blocks if preflight.verdict == "block" else preflight.warnings
     return ReasoningSession(
         session_id=session_id or uuid.uuid4().hex,

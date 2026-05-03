@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from rulence.classifier import classify_task
@@ -129,6 +130,40 @@ class RulenceMvpTests(unittest.TestCase):
         self.assertEqual(result["structuredContent"], payload)
         self.assertIn("tier", payload)
         self.assertIn("reasons", payload)
+
+    def test_mcp_missing_required_arg_returns_invalid_params(self) -> None:
+        response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "rulence_classify", "arguments": {}},
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("task", response["error"]["message"])
+
+    def test_mcp_unknown_tool_returns_invalid_params(self) -> None:
+        response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "does_not_exist", "arguments": {}},
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("unknown tool", response["error"]["message"])
+
+    def test_mcp_unknown_method_returns_method_not_found(self) -> None:
+        response = handle_request(
+            {"jsonrpc": "2.0", "id": 3, "method": "does_not_exist", "params": {}}
+        )
+
+        self.assertEqual(response["error"]["code"], -32601)
+        self.assertIn("method not found", response["error"]["message"])
 
     def test_reasoning_session_supports_revision_and_branch(self) -> None:
         session = start_session("compare two architecture options")
@@ -266,6 +301,25 @@ class RulenceMvpTests(unittest.TestCase):
             loaded = store.load("demo")
             self.assertEqual(loaded.session_id, "demo")
             self.assertEqual(len(loaded.steps), 1)
+
+    def test_session_store_concurrent_writes_leave_valid_json(self) -> None:
+        import os
+        import threading
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(directory)
+            sessions = [start_session(f"task {i}", session_id="shared") for i in range(20)]
+            threads = [threading.Thread(target=store.save, args=(s,)) for s in sessions]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            loaded = store.load("shared")
+            self.assertEqual(loaded.session_id, "shared")
+            self.assertTrue(loaded.task.startswith("task "))
+            leftovers = [name for name in os.listdir(directory) if ".tmp" in name]
+            self.assertEqual(leftovers, [])
 
     def test_policy_validation_accepts_default_policies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -447,6 +501,56 @@ class RulenceMvpTests(unittest.TestCase):
         self.assertEqual(output["hookEventName"], "PreToolUse")
         self.assertEqual(output["permissionDecision"], "deny")
         self.assertIn("Rulence blocked", output["permissionDecisionReason"])
+
+    def test_claude_code_hook_picks_up_transcript_path_when_present(self) -> None:
+        from rulence.classifier import classify_task
+
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = Path(directory) / "policies"
+            policy_dir.mkdir()
+            task_text = "deploy the app on friday"
+            tier = classify_task(task_text).tier
+            (policy_dir / f"tier-{tier}-tx.toml").write_text(
+                f'tier = {tier}\nlabel = "tx"\n'
+                'required_checks = ["transcript_contradiction"]\n'
+                "warn_if = []\nblock_if = []\n",
+                encoding="utf-8",
+            )
+            transcript = Path(directory) / "transcript.jsonl"
+            transcript.write_text(
+                json.dumps({"role": "user", "content": "don't deploy on friday"}) + "\n",
+                encoding="utf-8",
+            )
+            payload = {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": task_text},
+                "transcript_path": str(transcript),
+            }
+            stdout = io.StringIO()
+            with patch.dict(os.environ, {"RULENCE_POLICY_DIR": str(policy_dir)}), patch(
+                "sys.stdin", io.StringIO(json.dumps(payload))
+            ), redirect_stdout(stdout):
+                code = main(["hook", "claude-code-pretooluse"])
+
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(data["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_claude_code_hook_falls_back_when_transcript_path_missing(self) -> None:
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "list the files in this directory"},
+            "transcript_path": "/no/such/transcript.jsonl",
+        }
+        stdout = io.StringIO()
+        with patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(stdout):
+            code = main(["hook", "claude-code-pretooluse"])
+
+        # No traceback, hook continues. For this benign task it suppresses output.
+        self.assertEqual(code, 0)
+        self.assertNotIn("Traceback", stdout.getvalue())
 
     def test_token_estimator_reports_method(self) -> None:
         count, method = estimate_tokens("hello world")

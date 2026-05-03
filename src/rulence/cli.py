@@ -5,13 +5,25 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib import error as urllib_error
 
 from .classifier import classify_task
 from .config import write_default_memory_config
 from .decomposer import decompose_prompt
 from .doctor import run_doctor
 from .feedback import read_feedback, record_feedback, summarize_feedback
-from .memory import memory_health, memory_items_to_context, mempalace_rooms, mempalace_wings, retrieve_combined, retrieve_memory
+from .mcp_client import McpError
+from .memory import (
+    MemoryProviderError,
+    memory_health,
+    memory_items_to_context,
+    mempalace_rooms,
+    mempalace_wings,
+    retrieve_combined,
+    retrieve_memory,
+)
+
+MEMORY_PROVIDER_ERRORS = (McpError, MemoryProviderError, urllib_error.URLError, OSError)
 from .models import ReasoningSession
 from .policy_cases import run_policy_cases
 from .policies import (
@@ -62,6 +74,8 @@ def _main(argv: list[str] | None = None) -> int:
     preflight_parser.add_argument("--memory-path", help="Path for local file/directory memory provider.")
     preflight_parser.add_argument("--memory-url", help="Base URL for Honcho/MemPalace compatible memory provider.")
     preflight_parser.add_argument("--memory-limit", type=int, default=5, help="Maximum memory chunks to retrieve.")
+    preflight_parser.add_argument("--transcript", help="Path to a conversation transcript (JSONL or plain text) for transcript-aware checks.")
+    preflight_parser.add_argument("--transcript-stdin", action="store_true", help="Read the conversation transcript from stdin.")
     preflight_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
     start_parser = subparsers.add_parser("start", help="Start a governed reasoning session.")
@@ -76,6 +90,8 @@ def _main(argv: list[str] | None = None) -> int:
     start_parser.add_argument("--memory-path", help="Path for local file/directory memory provider.")
     start_parser.add_argument("--memory-url", help="Base URL for Honcho/MemPalace compatible memory provider.")
     start_parser.add_argument("--memory-limit", type=int, default=5, help="Maximum memory chunks to retrieve.")
+    start_parser.add_argument("--transcript", help="Path to a conversation transcript (JSONL or plain text).")
+    start_parser.add_argument("--transcript-stdin", action="store_true", help="Read the conversation transcript from stdin.")
     start_parser.add_argument("--session-id", help="Save a persistent session under ~/.rulence/sessions.")
     start_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
@@ -101,6 +117,8 @@ def _main(argv: list[str] | None = None) -> int:
     think_parser.add_argument("--branch-from", type=int, help="Branch from a previous thought number.")
     think_parser.add_argument("--branch-id", help="Identifier for a reasoning branch.")
     think_parser.add_argument("--needs-more-thoughts", action="store_true", help="Mark the estimate as too low.")
+    think_parser.add_argument("--transcript", help="Path to a conversation transcript (JSONL or plain text).")
+    think_parser.add_argument("--transcript-stdin", action="store_true", help="Read the conversation transcript from stdin.")
     think_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
     sequential_parser = subparsers.add_parser("sequentialthinking", help="Run the Sequential Thinking compatible tool.")
@@ -207,7 +225,8 @@ def _main(argv: list[str] | None = None) -> int:
             args.memory_limit,
             args.memory_transport,
         )
-        result = preflight_task(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model)
+        transcript = _resolve_transcript(args)
+        result = preflight_task(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model, transcript=transcript)
         _print(result.to_dict(), args.json)
         return 0 if result.verdict != "block" else 2
 
@@ -225,7 +244,8 @@ def _main(argv: list[str] | None = None) -> int:
             args.memory_limit,
             args.memory_transport,
         )
-        session = start_session(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model, session_id=args.session_id)
+        transcript = _resolve_transcript(args)
+        session = start_session(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model, session_id=args.session_id, transcript=transcript)
         if args.session_id:
             SessionStore().save(session)
         _print_reasoning(session.to_dict(), args.json)
@@ -245,7 +265,8 @@ def _main(argv: list[str] | None = None) -> int:
             args.memory_limit,
             args.memory_transport,
         )
-        session = _load_or_start_session(args.task, args.session_file, args.session_id, memory, args.policy_dir, args.model)
+        transcript = _resolve_transcript(args)
+        session = _load_or_start_session(args.task, args.session_file, args.session_id, memory, args.policy_dir, args.model, transcript=transcript)
         session = add_thought(
             session,
             args.thought,
@@ -410,25 +431,45 @@ def _main(argv: list[str] | None = None) -> int:
             _print_memory_payload(memory_health(args.provider or "all", path=args.path), args.json)
             return 0
         if args.target == "wings":
-            _print_memory_payload(mempalace_wings(), args.json)
+            try:
+                wings = mempalace_wings()
+            except (McpError, MemoryProviderError) as exc:
+                _print_memory_payload(
+                    {"provider": "mempalace", "reachable": False, "transport": "mcp", "wings": [], "error": str(exc)},
+                    args.json,
+                )
+                return 1
+            _print_memory_payload(wings, args.json)
             return 0
         if args.target == "rooms":
             if not args.wing:
                 print("memory rooms requires --wing", file=sys.stderr)
                 return 2
-            _print_memory_payload(mempalace_rooms(args.wing), args.json)
+            try:
+                rooms = mempalace_rooms(args.wing)
+            except (McpError, MemoryProviderError) as exc:
+                _print_memory_payload(
+                    {"provider": "mempalace", "reachable": False, "transport": "mcp", "wing": args.wing, "rooms": [], "error": str(exc)},
+                    args.json,
+                )
+                return 1
+            _print_memory_payload(rooms, args.json)
             return 0
         if not args.target or not args.provider:
             print("memory requires QUERY and --provider, or one of: health, wings, rooms", file=sys.stderr)
             return 2
-        items = retrieve_memory(
-            args.provider,
-            args.target,
-            path=args.path,
-            url=args.url,
-            limit=args.limit,
-            transport=args.transport,
-        )
+        try:
+            items = retrieve_memory(
+                args.provider,
+                args.target,
+                path=args.path,
+                url=args.url,
+                limit=args.limit,
+                transport=args.transport,
+            )
+        except MEMORY_PROVIDER_ERRORS as exc:
+            print(f"error: memory provider '{args.provider}' unreachable: {exc}", file=sys.stderr)
+            return 1
         _print_memory_payload([item.to_dict() for item in items], args.json)
         return 0
 
@@ -488,6 +529,7 @@ def _load_or_start_session(
     memory: str,
     policy_dir: str | None,
     model: str | None,
+    transcript: str | None = None,
 ) -> ReasoningSession:
     if session_file:
         path = Path(session_file).expanduser()
@@ -497,8 +539,8 @@ def _load_or_start_session(
         store = SessionStore()
         if store.exists(session_id):
             return store.load(session_id)
-        return start_session(task, memory=memory, policy_dir=policy_dir, model=model, session_id=session_id)
-    return start_session(task, memory=memory, policy_dir=policy_dir, model=model)
+        return start_session(task, memory=memory, policy_dir=policy_dir, model=model, session_id=session_id, transcript=transcript)
+    return start_session(task, memory=memory, policy_dir=policy_dir, model=model, transcript=transcript)
 
 
 def _merge_memory(
@@ -511,15 +553,41 @@ def _merge_memory(
     limit: int,
     transport: str,
 ) -> str:
+    items = []
     if providers:
         provider_names = [name.strip() for name in providers.split(",") if name.strip()]
         paths = {"local": path} if path else {}
         urls = {name: url for name in provider_names if url and name != "local"}
-        items = retrieve_combined(provider_names, task, paths=paths, urls=urls, limit=limit, transport=transport)
-    else:
-        items = retrieve_memory(provider, task, path=path, url=url, limit=limit, transport=transport) if provider else []
+        try:
+            items = retrieve_combined(provider_names, task, paths=paths, urls=urls, limit=limit, transport=transport)
+        except MEMORY_PROVIDER_ERRORS as exc:
+            print(f"warn: memory providers unreachable ({','.join(provider_names)}): {exc}", file=sys.stderr)
+    elif provider:
+        try:
+            items = retrieve_memory(provider, task, path=path, url=url, limit=limit, transport=transport)
+        except MEMORY_PROVIDER_ERRORS as exc:
+            print(f"warn: memory provider '{provider}' unreachable: {exc}", file=sys.stderr)
     retrieved = memory_items_to_context(items)
     return "\n\n".join(part for part in (memory, retrieved) if part.strip())
+
+
+def _resolve_transcript(args: argparse.Namespace) -> str | None:
+    if getattr(args, "transcript", None) and getattr(args, "transcript_stdin", False):
+        raise ValueError("--transcript and --transcript-stdin are mutually exclusive")
+    if getattr(args, "transcript", None):
+        from .transcript import MAX_TRANSCRIPT_BYTES
+        path = Path(args.transcript).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"transcript file not found: {path}")
+        size = path.stat().st_size
+        if size > MAX_TRANSCRIPT_BYTES:
+            raise ValueError(
+                f"transcript {path} is {size} bytes, exceeds MAX_TRANSCRIPT_BYTES ({MAX_TRANSCRIPT_BYTES})"
+            )
+        return path.read_text(encoding="utf-8", errors="replace")
+    if getattr(args, "transcript_stdin", False):
+        return sys.stdin.read()
+    return None
 
 
 def _read_prompt_source(source: str) -> str:
@@ -597,6 +665,26 @@ def _optional_payload_int(input_data: dict, camel_key: str, snake_key: str) -> i
     return int(value)
 
 
+def _claude_hook_transcript(payload: dict) -> str | None:
+    raw_path = payload.get("transcript_path") or payload.get("transcriptPath")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    try:
+        from .transcript import MAX_TRANSCRIPT_BYTES
+        path = Path(raw_path).expanduser()
+        if not path.exists() or not path.is_file():
+            return None
+        if path.stat().st_size > MAX_TRANSCRIPT_BYTES:
+            print(
+                f"warn: Claude Code transcript at {path} exceeds {MAX_TRANSCRIPT_BYTES} bytes; skipping transcript-aware checks",
+                file=sys.stderr,
+            )
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _claude_code_pretooluse(raw_input: str) -> dict:
     payload = json.loads(raw_input) if raw_input.strip() else {}
     if not isinstance(payload, dict):
@@ -605,7 +693,12 @@ def _claude_code_pretooluse(raw_input: str) -> dict:
     if not task.strip():
         return {"suppressOutput": True}
 
-    result = preflight_task(task, policy_dir=os.environ.get("RULENCE_POLICY_DIR"))
+    transcript = _claude_hook_transcript(payload)
+    result = preflight_task(
+        task,
+        policy_dir=os.environ.get("RULENCE_POLICY_DIR"),
+        transcript=transcript,
+    )
     if result.verdict == "block":
         return {
             "hookSpecificOutput": {
