@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib import error as urllib_error
 
 from .classifier import classify_task
 from .config import write_default_memory_config
@@ -21,6 +22,8 @@ from .memory import (
     retrieve_combined,
     retrieve_memory,
 )
+
+MEMORY_PROVIDER_ERRORS = (McpError, MemoryProviderError, urllib_error.URLError, OSError)
 from .models import ReasoningSession
 from .policy_cases import run_policy_cases
 from .policies import (
@@ -446,14 +449,18 @@ def _main(argv: list[str] | None = None) -> int:
         if not args.target or not args.provider:
             print("memory requires QUERY and --provider, or one of: health, wings, rooms", file=sys.stderr)
             return 2
-        items = retrieve_memory(
-            args.provider,
-            args.target,
-            path=args.path,
-            url=args.url,
-            limit=args.limit,
-            transport=args.transport,
-        )
+        try:
+            items = retrieve_memory(
+                args.provider,
+                args.target,
+                path=args.path,
+                url=args.url,
+                limit=args.limit,
+                transport=args.transport,
+            )
+        except MEMORY_PROVIDER_ERRORS as exc:
+            print(f"error: memory provider '{args.provider}' unreachable: {exc}", file=sys.stderr)
+            return 1
         _print_memory_payload([item.to_dict() for item in items], args.json)
         return 0
 
@@ -536,13 +543,20 @@ def _merge_memory(
     limit: int,
     transport: str,
 ) -> str:
+    items = []
     if providers:
         provider_names = [name.strip() for name in providers.split(",") if name.strip()]
         paths = {"local": path} if path else {}
         urls = {name: url for name in provider_names if url and name != "local"}
-        items = retrieve_combined(provider_names, task, paths=paths, urls=urls, limit=limit, transport=transport)
-    else:
-        items = retrieve_memory(provider, task, path=path, url=url, limit=limit, transport=transport) if provider else []
+        try:
+            items = retrieve_combined(provider_names, task, paths=paths, urls=urls, limit=limit, transport=transport)
+        except MEMORY_PROVIDER_ERRORS as exc:
+            print(f"warn: memory providers unreachable ({','.join(provider_names)}): {exc}", file=sys.stderr)
+    elif provider:
+        try:
+            items = retrieve_memory(provider, task, path=path, url=url, limit=limit, transport=transport)
+        except MEMORY_PROVIDER_ERRORS as exc:
+            print(f"warn: memory provider '{provider}' unreachable: {exc}", file=sys.stderr)
     retrieved = memory_items_to_context(items)
     return "\n\n".join(part for part in (memory, retrieved) if part.strip())
 

@@ -141,6 +141,31 @@ order = ["honcho", "mempalace"]
         self.assertEqual(payload["wing"], "ops")
         self.assertEqual(payload["rooms"], [])
 
+    def test_cli_memory_query_exits_clean_when_provider_unreachable(self) -> None:
+        config = MemoryConfig(mempalace=MempalaceConfig(command="/nonexistent/mempalace-mcp"))
+        stderr = io.StringIO()
+        with patch("rulence.memory.load_memory_config", return_value=config):
+            with redirect_stderr(stderr):
+                code = cli_main(["memory", "rollback", "--provider", "mempalace"])
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertIn("memory provider 'mempalace' unreachable", stderr.getvalue())
+
+    def test_cli_preflight_continues_when_memory_provider_unreachable(self) -> None:
+        config = MemoryConfig(mempalace=MempalaceConfig(command="/nonexistent/mempalace-mcp"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("rulence.memory.load_memory_config", return_value=config):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = cli_main(["preflight", "compare two architectures", "--memory-provider", "mempalace", "--json"])
+
+        self.assertIn(code, (0, 2))
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertIn("memory provider 'mempalace' unreachable", stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("verdict", payload)
+
     def test_retrieve_combined_keeps_working_for_local_provider(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "memory.md"
