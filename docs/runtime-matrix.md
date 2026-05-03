@@ -38,6 +38,11 @@ implemented; see notes.
 - Token policy enforcement is `n` everywhere: there are no measured
   benchmarks, and Rulence does not throttle, cache, or rewrite based on
   token budget at runtime.
+- Secret redaction is applied at the storage boundary for audit
+  events, session traces, trace HTML, and feedback records. Coverage
+  is best-effort and limited to the detector list in
+  ``rulence.security.redactor``; custom or low-entropy secrets may
+  still pass through.
 
 ## How to use this matrix
 

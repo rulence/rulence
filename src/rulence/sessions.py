@@ -3,6 +3,10 @@
 This module stores Rulence reasoning traces and session state. It is not
 the runtime audit log. Runtime event audit records live in
 :mod:`rulence.audit.store`.
+
+All session JSON written via :class:`SessionStore` is passed through
+:func:`rulence.security.redact_payload` first so persisted traces do
+not contain common secret formats.
 """
 from __future__ import annotations
 
@@ -12,6 +16,13 @@ import tempfile
 from pathlib import Path
 
 from .models import ReasoningSession
+from .security import redact_payload
+
+
+def redacted_session_dict(session: ReasoningSession) -> dict:
+    """Return ``session.to_dict()`` with secrets redacted recursively."""
+    payload, _, _ = redact_payload(session.to_dict())
+    return payload
 
 
 def default_session_dir() -> Path:
@@ -36,7 +47,9 @@ class SessionStore:
     def save(self, session: ReasoningSession) -> Path:
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.path_for(session.session_id)
-        payload = json.dumps(session.to_dict(), indent=2, sort_keys=True).encode("utf-8")
+        payload = json.dumps(
+            redacted_session_dict(session), indent=2, sort_keys=True
+        ).encode("utf-8")
         fd, tmp_path = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=str(self.directory))
         try:
             with os.fdopen(fd, "wb") as handle:

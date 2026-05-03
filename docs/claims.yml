@@ -405,20 +405,46 @@ claims:
     notes: "M0 explicitly excludes this. Track separately before any public claim."
 
   - claim_id: memory_redaction
-    claim_text: "Automatic redaction of secrets, PII, and other sensitive data from memory reads or writes."
+    claim_text: "Policy-enforced redaction across memory reads and writes (roadmap)."
     category: memory
     status: aspirational
     current_evidence: []
     required_components:
-      - redaction_pipeline
+      - redaction_pipeline_for_memory
     acceptance_tests: []
     public_copy_allowed: false
     allowed_phrasings: []
     blocked_phrases:
-      - "automatic secret redaction"
-      - "redacts secrets"
       - "redacts memory"
-    notes: "README explicitly states there is no built-in redaction today."
+    notes: "Read-only memory redaction at the memory boundary is roadmap. The general-purpose redactor in rulence.security only runs at audit/session/trace/feedback boundaries today."
+
+  - claim_id: secret_redaction_at_storage
+    claim_text: "Best-effort redaction of common secret formats before audit, session, trace, and feedback storage."
+    category: audit
+    status: supported
+    current_evidence:
+      - "src/rulence/security/redactor.py: SecretRedactor and DEFAULT_DETECTORS"
+      - "src/rulence/cli.py: _record_audit applies redact_payload to evidence/metadata"
+      - "src/rulence/sessions.py: SessionStore.save calls redacted_session_dict"
+      - "src/rulence/trace_html.py: render_trace_html redacts before HTML build"
+      - "src/rulence/feedback.py: record_feedback redacts task and notes"
+    required_components:
+      - secret_redactor
+    acceptance_tests:
+      - tests.test_secret_redactor
+      - tests.test_audit_redaction
+      - tests.test_storage_redaction_boundaries
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence redacts common secrets before audit storage"
+      - "best-effort secret redaction at storage boundaries"
+      - "redaction is best-effort and not a complete DLP system"
+    blocked_phrases:
+      - "complete DLP"
+      - "guaranteed redaction"
+      - "PII compliance"
+      - "encryption at rest"
+    notes: "Detectors target high-precision formats (GitHub/AWS/OpenAI/Anthropic/Slack tokens, PEM keys, basic-auth and DB URLs, env-style KEY=value assignments). Custom or low-entropy secrets can still slip through."
 
   - claim_id: rulence_is_memory_backend
     claim_text: "Rulence is itself the canonical memory backend."

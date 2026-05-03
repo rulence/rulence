@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 
 from .models import ReasoningSession
+from .security import redact_payload
 
 CSS = """
 :root { color-scheme: light dark; }
@@ -44,6 +45,11 @@ footer { margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; color: #
 
 
 def render_trace_html(session: ReasoningSession) -> str:
+    # Redact at the trace boundary: the rendered HTML is a storage
+    # surface, not a debugger. The original session object is left
+    # untouched.
+    redacted_dict, _, _ = redact_payload(session.to_dict())
+    session = ReasoningSession.from_dict(redacted_dict)
     preflight = session.preflight
     classification = preflight.classification
 

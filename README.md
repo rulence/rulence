@@ -548,6 +548,11 @@ about what's enforced and what isn't:
 - It does **not** intercept tool calls on its own. Enforcement comes from the
   host runner's hook system. Today only the Claude Code installer wires a real
   PreToolUse gate; Cursor and n8n integrations are advisory.
+- Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
+  PEM private keys, basic-auth and database URLs, `KEY=value` env-style
+  assignments) before audit storage, session/trace persistence, and feedback
+  storage. Redaction is **best-effort** and is **not** a complete DLP system —
+  custom or low-entropy secrets may still pass through.
 - Policy files in `~/.rulence/policies` are **user-writable**. The same agent
   or user being "governed" can edit them. This is a guardrail for honest
   mistakes, not a defense against an adversarial user on the same machine.

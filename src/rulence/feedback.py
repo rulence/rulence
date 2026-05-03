@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .security import redact_text
+
 
 def default_feedback_path() -> Path:
     configured = os.environ.get("RULENCE_FEEDBACK_FILE")
@@ -23,13 +25,19 @@ def record_feedback(
     notes: str = "",
     path: str | Path | None = None,
 ) -> dict[str, Any]:
+    # Redact at the feedback storage boundary so the JSONL never holds
+    # raw secrets pasted into a task or note.
+    redacted_task = redact_text(task)
+    redacted_notes = redact_text(notes)
     record = {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "task": task,
+        "task": redacted_task.redacted_text,
         "outcome": outcome,
         "verdict": verdict,
         "session_id": session_id,
-        "notes": notes,
+        "notes": redacted_notes.redacted_text,
+        "redaction_count": redacted_task.redaction_count + redacted_notes.redaction_count,
+        "redaction_types": list(redacted_task.redaction_types) + list(redacted_notes.redaction_types),
     }
     target = Path(path).expanduser() if path else default_feedback_path()
     target.parent.mkdir(parents=True, exist_ok=True)

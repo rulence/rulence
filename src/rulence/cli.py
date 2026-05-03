@@ -290,7 +290,12 @@ def _main(argv: list[str] | None = None) -> int:
             needs_more_thoughts=args.needs_more_thoughts,
         )
         if args.session_file:
-            Path(args.session_file).expanduser().write_text(json.dumps(session.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+            from .sessions import redacted_session_dict
+
+            Path(args.session_file).expanduser().write_text(
+                json.dumps(redacted_session_dict(session), indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
         if args.session_id:
             SessionStore().save(session)
         _print_reasoning(session.to_dict(), args.json)
@@ -793,14 +798,17 @@ def _record_audit(
 ) -> None:
     """Write a single audit record for a Claude Code hook event.
 
-    Audit failures must never break a hook response. Writes go through
-    best-effort exception handling and degrade to a stderr warning.
+    All text fields (evidence, metadata, tool_name, policy_name) pass
+    through :func:`rulence.security.redact_payload` before they are
+    persisted. The raw payload is hashed, never stored. Audit failures
+    degrade to a stderr warning and never break the hook response.
     """
     try:
         import hashlib
 
         from .audit import AuditTraceStore, CorrelationIdManager, RulenceAuditEvent
         from .audit.correlation import hash_text
+        from .security import redact_payload
 
         claude_session = payload.get("session_id") or payload.get("sessionId")
         manager = CorrelationIdManager()
@@ -820,20 +828,31 @@ def _record_audit(
             json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
 
+        # Apply redaction at the audit boundary. Text-bearing fields go
+        # through redact_payload; other fields are scalars or hashes.
+        red_evidence, ev_count, ev_types = redact_payload(list(evidence))
+        red_metadata, md_count, md_types = redact_payload(dict(metadata or {}))
+        red_tool_name, tn_count, tn_types = redact_payload(tool_name) if tool_name else (None, 0, ())
+        red_policy_name, pn_count, pn_types = redact_payload(policy_name) if policy_name else (None, 0, ())
+
+        total_redactions = ev_count + md_count + tn_count + pn_count
+        all_types = tuple([*ev_types, *md_types, *tn_types, *pn_types])
+
         event = RulenceAuditEvent.now(
             event_type=event_type,
             session_id=ctx.rulence_session_id,
             corr_id=ctx.corr_id,
             runner="claude_code",
             decision=decision,
-            evidence=evidence,
-            policy_name=policy_name,
-            tool_name=tool_name,
-            redaction_count=0,
+            evidence=tuple(red_evidence),
+            policy_name=red_policy_name,
+            tool_name=red_tool_name,
+            redaction_count=total_redactions,
+            redaction_types=all_types,
             token_estimate=None,
-            payload_redacted=False,
+            payload_redacted=total_redactions > 0,
             raw_payload_hash=raw_payload_hash,
-            metadata=metadata or {},
+            metadata=red_metadata,
         )
         AuditTraceStore().append(event)
     except Exception as exc:  # pragma: no cover - defensive

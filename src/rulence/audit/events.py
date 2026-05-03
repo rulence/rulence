@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class RulenceAuditEvent:
     payload_redacted: bool
     raw_payload_hash: str | None
     metadata: dict[str, Any] = field(default_factory=dict)
+    redaction_types: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +59,7 @@ class RulenceAuditEvent:
             "payload_redacted": self.payload_redacted,
             "raw_payload_hash": self.raw_payload_hash,
             "metadata": dict(self.metadata),
+            "redaction_types": list(self.redaction_types),
         }
 
     @classmethod
@@ -78,6 +80,7 @@ class RulenceAuditEvent:
         payload_redacted: bool = False,
         raw_payload_hash: str | None = None,
         metadata: dict[str, Any] | None = None,
+        redaction_types: tuple[str, ...] = (),
     ) -> "RulenceAuditEvent":
         return cls(
             schema_version=SCHEMA_VERSION,
@@ -97,4 +100,5 @@ class RulenceAuditEvent:
             payload_redacted=payload_redacted,
             raw_payload_hash=raw_payload_hash,
             metadata=dict(metadata or {}),
+            redaction_types=tuple(redaction_types),
         )
