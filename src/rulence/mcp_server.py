@@ -18,6 +18,10 @@ SERVER_INFO = {"name": "rulence", "version": "0.3.0"}
 SEQUENTIAL_SESSION_ID = "__sequentialthinking__"
 
 
+class InvalidParamsError(ValueError):
+    """Raised when an MCP tool call has missing or invalid parameters."""
+
+
 def main() -> int:
     while True:
         try:
@@ -58,6 +62,8 @@ def handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
             return _result(request_id, _call_tool(params.get("name"), params.get("arguments", {})))
 
         return _error(request_id, -32601, f"method not found: {method}")
+    except InvalidParamsError as exc:
+        return _error(request_id, -32602, str(exc))
     except Exception as exc:  # pragma: no cover - defensive server boundary
         return _error(request_id, -32603, str(exc))
 
@@ -93,7 +99,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     elif name == "rulence_think":
         session_id = _required_text(arguments, "session_id")
         if not store.exists(session_id):
-            raise ValueError(f"unknown session_id: {session_id}")
+            raise InvalidParamsError(f"unknown session_id: {session_id}")
         session = add_thought(
             store.load(session_id),
             _required_text(arguments, "thought"),
@@ -111,7 +117,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     elif name == "rulence_trace":
         session_id = _required_text(arguments, "session_id")
         if not store.exists(session_id):
-            raise ValueError(f"unknown session_id: {session_id}")
+            raise InvalidParamsError(f"unknown session_id: {session_id}")
         session = store.load(session_id)
         payload = {
             "summary": summarize_session(session),
@@ -126,7 +132,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     elif name == "sequentialthinking":
         return _sequentialthinking(arguments)
     else:
-        raise ValueError(f"unknown tool: {name}")
+        raise InvalidParamsError(f"unknown tool: {name}")
 
     return {
         "content": [
@@ -379,7 +385,7 @@ def _log_thought(
 def _required_text(arguments: dict[str, Any], key: str) -> str:
     value = str(arguments.get(key, ""))
     if not value.strip():
-        raise ValueError(f"tool argument '{key}' is required")
+        raise InvalidParamsError(f"tool argument '{key}' is required")
     return value
 
 
@@ -387,7 +393,10 @@ def _optional_int(arguments: dict[str, Any], key: str) -> int | None:
     value = arguments.get(key)
     if value is None:
         return None
-    return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidParamsError(f"tool argument '{key}' must be an integer") from exc
 
 
 def _result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:

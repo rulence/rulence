@@ -130,6 +130,40 @@ class RulenceMvpTests(unittest.TestCase):
         self.assertIn("tier", payload)
         self.assertIn("reasons", payload)
 
+    def test_mcp_missing_required_arg_returns_invalid_params(self) -> None:
+        response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "rulence_classify", "arguments": {}},
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("task", response["error"]["message"])
+
+    def test_mcp_unknown_tool_returns_invalid_params(self) -> None:
+        response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "does_not_exist", "arguments": {}},
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("unknown tool", response["error"]["message"])
+
+    def test_mcp_unknown_method_returns_method_not_found(self) -> None:
+        response = handle_request(
+            {"jsonrpc": "2.0", "id": 3, "method": "does_not_exist", "params": {}}
+        )
+
+        self.assertEqual(response["error"]["code"], -32601)
+        self.assertIn("method not found", response["error"]["message"])
+
     def test_reasoning_session_supports_revision_and_branch(self) -> None:
         session = start_session("compare two architecture options")
         session = add_thought(
