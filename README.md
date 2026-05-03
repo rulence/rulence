@@ -471,10 +471,17 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 npm test
 npm run check
 PYTHONPATH=src python3 -m rulence doctor
+PYTHONPATH=src python3 -m rulence claims verify
 PYTHONPATH=src python3 -m rulence classify "prove this claim is true" --json
 PYTHONPATH=src python3 -m rulence preflight "delete production credentials" --json
 PYTHONPATH=src python3 -m rulence think "plan a migration" --thought "Risk: rollback is missing, so verify backup first." --json
 ```
+
+`rulence claims verify` validates the claim ledger at `docs/claims.yml` and
+scans README, docs, CLI help, and packaging metadata for blocked phrases.
+See [docs/claims.md](docs/claims.md) for what Rulence is and is not allowed
+to claim, and [docs/runtime-matrix.md](docs/runtime-matrix.md) for the
+per-runtime capability table.
 
 Session persistence:
 

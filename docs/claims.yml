@@ -1,0 +1,555 @@
+# Rulence claims ledger.
+#
+# Every public claim about Rulence must have an entry here. The verifier
+# (`rulence claims verify`) loads this file, validates the schema, and scans
+# README, docs, CLI help, and packaging metadata for any blocked phrases.
+#
+# Schema:
+#   claim_id            string, lowercase_snake_case
+#   claim_text          one-line summary
+#   category            grouping for humans; not enforced
+#   status              supported | partial | advisory | aspirational | unsupported
+#   current_evidence    file/function references that prove the claim today
+#   required_components what would have to exist for the claim to be true
+#   acceptance_tests    test ids that must continue to pass
+#   public_copy_allowed boolean; whether marketing copy may make this claim
+#   allowed_phrasings   exact or close-to-exact phrases that are safe to use
+#   blocked_phrases     phrases the scanner should refuse outside of roadmap sections
+#   notes               human-readable caveats
+#
+# Rules enforced by src/rulence/claims.py:
+#   * Unsupported claims must have public_copy_allowed: false.
+#   * Aspirational + public requires a roadmap qualifier in claim_text.
+#   * Supported claims must cite at least one current_evidence entry.
+#   * Advisory claims should advertise themselves as advisory/optional/host-routed.
+
+version: 1
+claims:
+  - claim_id: claude_code_pretooluse_block
+    claim_text: "Blocks Claude Code tool calls via the PreToolUse hook when policy returns block."
+    category: enforcement
+    status: supported
+    current_evidence:
+      - "src/rulence/installers.py: install_claude_code and CLAUDE_HOOK"
+      - "src/rulence/cli.py: _claude_code_pretooluse"
+    required_components:
+      - claude_code_hook_handler
+      - preflight
+    acceptance_tests:
+      - tests.test_installers.test_install_claude_code_creates_hook
+      - tests.test_rulence.test_claude_code_pretooluse_blocks_destructive_tool
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "real PreToolUse enforcement on Claude Code"
+      - "blocks Claude Code tool calls via PreToolUse"
+      - "hook-based governance for Claude Code"
+    blocked_phrases: []
+    notes: "Only Claude Code has a real runtime gate today."
+
+  - claim_id: cursor_rule_advisory
+    claim_text: "Writes an advisory project rule for Cursor; enforcement depends on the model honoring the rule."
+    category: enforcement
+    status: advisory
+    current_evidence:
+      - "src/rulence/installers.py: install_cursor and CURSOR_RULE"
+    required_components:
+      - cursor_installer
+    acceptance_tests:
+      - tests.test_installers.test_install_cursor_writes_rule
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "advisory project rule for Cursor"
+      - "Cursor compliance is advisory and depends on the model"
+      - "advisory rule, not a runtime gate"
+    blocked_phrases:
+      - "Cursor enforcement"
+      - "governs Cursor agents"
+      - "blocks tool calls in Cursor"
+    notes: "Cursor lacks a PreToolUse hook today; the rule is a model-instructed nudge."
+
+  - claim_id: n8n_mcp_advisory
+    claim_text: "Prints n8n MCP server config; whether the workflow consults Rulence is advisory."
+    category: enforcement
+    status: advisory
+    current_evidence:
+      - "src/rulence/installers.py: install_n8n and N8N_CONFIG"
+    required_components:
+      - n8n_installer
+    acceptance_tests:
+      - tests.test_installers.test_install_n8n_returns_config
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "advisory n8n MCP integration"
+      - "n8n integration is advisory and requires host routing"
+      - "workflow author decides whether to consult Rulence"
+    blocked_phrases:
+      - "n8n enforcement"
+      - "governs n8n agents"
+      - "blocks tool calls in n8n"
+    notes: "Rulence cannot intercept n8n nodes on its own."
+
+  - claim_id: tier_classifier
+    claim_text: "Deterministic local task tier classification with no model dependency."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/classifier.py: classify_task"
+      - "src/rulence/policies.py"
+    required_components:
+      - classifier
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "deterministic tier classification"
+      - "local task tiering"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: policy_preflight
+    claim_text: "Policy-driven preflight returning approve/warn/block before action."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/preflight.py: preflight_task"
+      - "src/rulence/checks.py"
+      - "src/rulence/policies.py"
+    required_components:
+      - preflight
+      - policy_loader
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "policy-driven preflight"
+      - "approve/warn/block verdicts"
+      - "local policy preflight"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: local_first_no_telemetry
+    claim_text: "Local-first execution with no built-in telemetry, model calls, or database."
+    category: governance
+    status: supported
+    current_evidence:
+      - "README.md: 'No cloud calls, no model dependency, no database, no telemetry.'"
+      - "src/rulence: no outbound clients except user-configured memory providers"
+    required_components: []
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "local-first"
+      - "no telemetry"
+      - "no model dependency"
+    blocked_phrases: []
+    notes: "Memory providers are user-configured; only those reach the network."
+
+  - claim_id: sequential_thinking_compat
+    claim_text: "Drop-in compatibility with the Sequential Thinking MCP tool name and schema."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/cli.py: _sequentialthinking"
+      - "src/rulence/mcp_server.py"
+    required_components:
+      - mcp_server
+      - reasoning_session
+    acceptance_tests:
+      - tests.test_rulence
+      - tests.test_mcp_client
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Sequential Thinking compatible"
+      - "drop-in MCP tool schema"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: decomposition_dag
+    claim_text: "Deterministic decomposition of a prompt into a typed task DAG."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/decomposer.py"
+    required_components:
+      - decomposer
+    acceptance_tests:
+      - tests.test_decomposer
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "typed task DAG"
+      - "deterministic prompt decomposition"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: constraint_solver
+    claim_text: "Local requires/forbids constraint conflict detection."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/logic.py"
+      - "src/rulence/checks.py: constraint_solver"
+    required_components:
+      - logic
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "local constraint conflict detection"
+      - "requires/forbids checks"
+    blocked_phrases: []
+    notes: "Heuristic; not a full theorem prover."
+
+  - claim_id: starter_policies
+    claim_text: "Bundled starter policies for secrets, git, migrations, AWS, and payments."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/builtin_policies/*.toml"
+      - "src/rulence/policies.py: install_builtin_policy"
+    required_components:
+      - policy_loader
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "starter policy packs"
+      - "installable policies"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: policy_validation
+    claim_text: "Local policy file validation."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/policies.py: validate_policy_dir"
+    required_components:
+      - policy_loader
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "policy validation"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: policy_regression_runner
+    claim_text: "Local policy regression case runner."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/policy_cases.py"
+    required_components:
+      - policy_cases
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "local regression cases"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: transcript_aware_checks
+    claim_text: "Optional transcript-aware checks for drift, contradiction, and staleness when a transcript is supplied."
+    category: runtime_visibility
+    status: advisory
+    current_evidence:
+      - "src/rulence/transcript.py"
+      - "src/rulence/checks.py: _transcript_drift_check"
+    required_components:
+      - transcript_parser
+      - checks
+    acceptance_tests:
+      - tests.test_transcript
+      - tests.test_transcript_checks
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "optional transcript-aware checks"
+      - "advisory drift heuristic when a transcript is supplied"
+      - "transcript visibility requires host routing or explicit input"
+    blocked_phrases:
+      - "full conversation governance"
+      - "full-conversation governance"
+      - "full conversation visibility"
+      - "full-conversation visibility"
+    notes: "Rulence sees transcripts only when --transcript, transcript_path, or the Claude Code hook auto-pickup supplies them."
+
+  - claim_id: local_session_traces
+    claim_text: "Local JSON session traces written to ~/.rulence/sessions."
+    category: audit
+    status: partial
+    current_evidence:
+      - "src/rulence/sessions.py"
+      - "src/rulence/trace_html.py"
+    required_components:
+      - session_store
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "local session traces"
+      - "user-writable JSON traces"
+      - "trace files on the local filesystem"
+    blocked_phrases:
+      - "central audit"
+      - "central audit log"
+      - "tamper-evident audit"
+      - "signed audit log"
+    notes: "Traces are user-writable JSON. There is no central or tamper-evident audit yet."
+
+  - claim_id: mcp_stdio_server
+    claim_text: "Local MCP stdio server exposing classify, decompose, preflight, and reasoning tools."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/mcp_server.py"
+      - "src-js/mcp-server.js"
+    required_components:
+      - mcp_server
+    acceptance_tests:
+      - tests.test_mcp_client
+      - tests.test_jsonrpc
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "local MCP stdio server"
+      - "MCP-compatible"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: honcho_memory_query
+    claim_text: "Reads from Honcho over REST when configured."
+    category: memory
+    status: partial
+    current_evidence:
+      - "src/rulence/memory.py: HonchoMemoryProvider"
+      - "src/rulence/config.py: HonchoConfig"
+    required_components:
+      - honcho_provider
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "queries Honcho over REST where configured"
+      - "Honcho-compatible memory reads"
+    blocked_phrases: []
+    notes: "Read-only retrieval today. No writes, no policy gating, no redaction."
+
+  - claim_id: mempalace_memory_query
+    claim_text: "Reads from MemPalace over native MCP when configured."
+    category: memory
+    status: partial
+    current_evidence:
+      - "src/rulence/memory.py: MempalaceMcpProvider"
+      - "src/rulence/config.py: MempalaceConfig"
+    required_components:
+      - mempalace_provider
+    acceptance_tests:
+      - tests.test_memory_mcp
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "queries MemPalace via MCP where configured"
+      - "MemPalace-compatible memory reads"
+    blocked_phrases: []
+    notes: "Read-only traversal today. No writes, no policy gating, no redaction."
+
+  - claim_id: memory_provider_health
+    claim_text: "Health checks for configured memory providers."
+    category: memory
+    status: supported
+    current_evidence:
+      - "src/rulence/memory.py: memory_health"
+    required_components:
+      - memory_providers
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "memory provider health checks"
+    blocked_phrases: []
+    notes: ""
+
+  - claim_id: memory_combined_dedup
+    claim_text: "Combined memory retrieval with deduplication and configurable provider priority."
+    category: memory
+    status: partial
+    current_evidence:
+      - "src/rulence/memory.py: retrieve_combined and _dedup_by_text"
+      - "src/rulence/config.py: priority"
+    required_components:
+      - memory_router
+    acceptance_tests:
+      - tests.test_rulence
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence routes and merges Honcho and MemPalace memory reads where configured"
+      - "Rulence arbitrates Honcho and MemPalace memory access"
+      - "configurable provider priority"
+    blocked_phrases: []
+    notes: "Routing/merging only. No write arbitration, no policy enforcement on memory yet."
+
+  - claim_id: memory_arbitration_policy
+    claim_text: "Policy-enforced memory arbitration across Honcho and MemPalace, including write routing and redaction (roadmap)."
+    category: memory
+    status: aspirational
+    current_evidence: []
+    required_components:
+      - memory_router
+      - memory_policy_engine
+      - redaction_pipeline
+      - audit_log
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases: []
+    notes: "M0 explicitly excludes this. Track separately before any public claim."
+
+  - claim_id: memory_redaction
+    claim_text: "Automatic redaction of secrets, PII, and other sensitive data from memory reads or writes."
+    category: memory
+    status: aspirational
+    current_evidence: []
+    required_components:
+      - redaction_pipeline
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "automatic secret redaction"
+      - "redacts secrets"
+      - "redacts memory"
+    notes: "README explicitly states there is no built-in redaction today."
+
+  - claim_id: rulence_is_memory_backend
+    claim_text: "Rulence is itself the canonical memory backend."
+    category: memory
+    status: unsupported
+    current_evidence: []
+    required_components: []
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "rulence is the memory system"
+      - "rulence is the memory backend"
+      - "rulence stores all memory"
+      - "rulence replaces memory"
+      - "rulence replaces honcho"
+      - "rulence replaces mempalace"
+    notes: "Honcho and MemPalace are the canonical memory systems. Rulence governs access; it is not a backend."
+
+  - claim_id: governs_every_agent
+    claim_text: "Rulence governs every agent regardless of runtime."
+    category: cross_runtime
+    status: unsupported
+    current_evidence: []
+    required_components:
+      - universal_runtime_proxy
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "govern every agent"
+      - "governs every agent"
+      - "coordinates all agents"
+      - "governs all agents"
+    notes: "Only Claude Code has a runtime hook today. Other runtimes are advisory."
+
+  - claim_id: cross_runtime_consistency
+    claim_text: "Same MCP server can serve multiple runners; consistent enforcement is per-runtime, not universal."
+    category: cross_runtime
+    status: partial
+    current_evidence:
+      - "src/rulence/mcp_server.py"
+      - "src-js/mcp-server.js"
+    required_components:
+      - mcp_server
+    acceptance_tests:
+      - tests.test_mcp_client
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "same policy file across supported runners"
+      - "policy reuse across runners"
+    blocked_phrases:
+      - "guaranteed cross-agent enforcement"
+      - "cross-agent enforcement"
+    notes: "Policy can be reused. Real enforcement only where the runner has a hook."
+
+  - claim_id: token_savings
+    claim_text: "Rulence reduces token usage."
+    category: context
+    status: unsupported
+    current_evidence: []
+    required_components:
+      - measured_benchmarks
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "reduces token waste"
+      - "reduces token usage"
+      - "saves tokens"
+      - "cuts token costs"
+    notes: "Token estimates exist; there are no measured savings benchmarks. Do not advertise savings."
+
+  - claim_id: prevents_context_drift
+    claim_text: "Rulence prevents context drift in agent conversations."
+    category: context
+    status: unsupported
+    current_evidence: []
+    required_components:
+      - context_intelligence
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "prevents context drift"
+      - "stops context drift"
+      - "eliminates context drift"
+    notes: "transcript_drift is a heuristic warning, not a prevention guarantee."
+
+  - claim_id: context_intelligence
+    claim_text: "Active context intelligence that summarizes, prunes, or rewrites the agent's working context."
+    category: context
+    status: aspirational
+    current_evidence: []
+    required_components:
+      - context_engine
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "active context intelligence"
+      - "context store"
+      - "context engine"
+    notes: "M0 explicitly excludes this."
+
+  - claim_id: runtime_governance_proxy
+    claim_text: "Generic runtime governance proxy that intercepts every tool call across runtimes (roadmap)."
+    category: enforcement
+    status: aspirational
+    current_evidence: []
+    required_components:
+      - runtime_proxy
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "intercepts every tool call"
+      - "runtime governance proxy"
+    notes: "Possible future direction. Not implemented in M0."
+
+  - claim_id: modify_tool_calls
+    claim_text: "Rulence rewrites or modifies tool call arguments before execution."
+    category: enforcement
+    status: unsupported
+    current_evidence: []
+    required_components:
+      - tool_call_rewriter
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "modifies tool calls"
+      - "rewrites tool calls"
+    notes: "Today the Claude Code hook can deny or ask, never modify. Other runtimes are advisory."

@@ -190,6 +190,15 @@ def _main(argv: list[str] | None = None) -> int:
     feedback_parser.add_argument("--limit", type=int, help="Limit list output to the most recent N records.")
     feedback_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
+    claims_parser = subparsers.add_parser("claims", help="Inspect and verify the claims ledger.")
+    claims_subparsers = claims_parser.add_subparsers(dest="claims_command", required=True)
+    claims_verify = claims_subparsers.add_parser("verify", help="Validate docs/claims.yml and scan public copy.")
+    claims_verify.add_argument("--root", help="Repository root. Defaults to the package root.")
+    claims_verify.add_argument("--json", action="store_true", help="Print JSON output.")
+    claims_list = claims_subparsers.add_parser("list", help="List claim ids and statuses.")
+    claims_list.add_argument("--root", help="Repository root. Defaults to the package root.")
+    claims_list.add_argument("--json", action="store_true", help="Print JSON output.")
+
     hook_parser = subparsers.add_parser("hook", help=argparse.SUPPRESS)
     hook_subparsers = hook_parser.add_subparsers(dest="hook_target", required=True)
     hook_subparsers.add_parser("claude-code-pretooluse", help=argparse.SUPPRESS)
@@ -507,6 +516,44 @@ def _main(argv: list[str] | None = None) -> int:
         else:
             print("feedback recorded")
         return 0
+
+    if args.command == "claims":
+        from .claims import load_claims, verify_repo
+
+        root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
+        if args.claims_command == "verify":
+            violations = verify_repo(root)
+            if args.json:
+                print(json.dumps([v.to_dict() for v in violations], indent=2, sort_keys=True))
+            else:
+                for violation in violations:
+                    location = f"{violation.file}:{violation.line}" if violation.line else violation.file
+                    print(f"{location}: {violation.message}")
+                if not violations:
+                    print("ok: claims ledger and public copy are consistent")
+            return 0 if not violations else 2
+        if args.claims_command == "list":
+            ledger_path = root / "docs" / "claims.yml"
+            if not ledger_path.exists():
+                print(f"error: {ledger_path} not found", file=sys.stderr)
+                return 2
+            ledger = load_claims(ledger_path)
+            rows = [
+                {
+                    "claim_id": claim.claim_id,
+                    "status": claim.status,
+                    "public_copy_allowed": claim.public_copy_allowed,
+                    "claim_text": claim.claim_text,
+                }
+                for claim in ledger.claims
+            ]
+            if args.json:
+                print(json.dumps(rows, indent=2, sort_keys=True))
+            else:
+                for row in rows:
+                    public = "public" if row["public_copy_allowed"] else "internal"
+                    print(f"{row['claim_id']:40s} {row['status']:13s} {public:8s} {row['claim_text']}")
+            return 0
 
     if args.command == "hook":
         if args.hook_target == "claude-code-pretooluse":
