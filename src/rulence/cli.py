@@ -217,10 +217,52 @@ def _main(argv: list[str] | None = None) -> int:
     claims_subparsers = claims_parser.add_subparsers(dest="claims_command", required=True)
     claims_verify = claims_subparsers.add_parser("verify", help="Validate docs/claims.yml and scan public copy.")
     claims_verify.add_argument("--root", help="Repository root. Defaults to the package root.")
+    claims_verify.add_argument(
+        "--require-evals",
+        action="store_true",
+        help="Also run the eval suite and fail if any supported claim has no passing eval evidence.",
+    )
     claims_verify.add_argument("--json", action="store_true", help="Print JSON output.")
     claims_list = claims_subparsers.add_parser("list", help="List claim ids and statuses.")
     claims_list.add_argument("--root", help="Repository root. Defaults to the package root.")
     claims_list.add_argument("--json", action="store_true", help="Print JSON output.")
+
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Run reproducible local Rulence evals.",
+    )
+    eval_subparsers = eval_parser.add_subparsers(dest="eval_command", required=True)
+
+    eval_run = eval_subparsers.add_parser("run", help="Discover and run evals.")
+    eval_run.add_argument("--root", help="Evals root directory.")
+    eval_run.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        help="Limit to a category (repeatable).",
+    )
+    eval_run.add_argument(
+        "--claim",
+        action="append",
+        default=[],
+        help="Limit to evals tied to a specific claim id (repeatable).",
+    )
+    eval_run.add_argument(
+        "--out", help="Write the JSON report to this file."
+    )
+    eval_run.add_argument(
+        "--markdown", help="Write a Markdown report to this file."
+    )
+    eval_run.add_argument("--json", action="store_true")
+
+    eval_report = eval_subparsers.add_parser(
+        "report",
+        help="Print a JSON or Markdown summary from a previously written report.",
+    )
+    eval_report.add_argument("path", help="Path to a JSON eval report.")
+    eval_report.add_argument(
+        "--markdown", action="store_true", help="Print Markdown instead of JSON."
+    )
 
     context_parser = subparsers.add_parser(
         "context",
@@ -673,7 +715,7 @@ def _main(argv: list[str] | None = None) -> int:
 
         root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
         if args.claims_command == "verify":
-            violations = verify_repo(root)
+            violations = verify_repo(root, require_evals=getattr(args, "require_evals", False))
             if args.json:
                 print(json.dumps([v.to_dict() for v in violations], indent=2, sort_keys=True))
             else:
@@ -706,6 +748,9 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"{row['claim_id']:40s} {row['status']:13s} {public:8s} {row['claim_text']}")
             return 0
 
+    if args.command == "eval":
+        return _eval_command(args)
+
     if args.command == "context":
         return _context_command(args)
 
@@ -724,6 +769,76 @@ def _main(argv: list[str] | None = None) -> int:
         return mcp_main()
 
     return 1
+
+
+def _eval_command(args) -> int:
+    from .evals import EvalRunner, EvalReport
+
+    if args.eval_command == "run":
+        runner = EvalRunner(args.root)
+        report = runner.run(
+            categories=args.category or None,
+            claim_ids=args.claim or None,
+        )
+        payload = report.to_dict()
+        if args.out:
+            Path(args.out).expanduser().write_text(
+                json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        if args.markdown:
+            Path(args.markdown).expanduser().write_text(
+                report.to_markdown(), encoding="utf-8"
+            )
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(report.to_markdown())
+        return 0 if report.passed else 1
+
+    if args.eval_command == "report":
+        path = Path(args.path).expanduser()
+        if not path.exists():
+            print(f"error: report not found at {path}", file=sys.stderr)
+            return 2
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if args.markdown:
+            from .evals.runner import EvalReport as _EvalReport
+            report = _EvalReport(
+                started_at=data.get("started_at", ""),
+                finished_at=data.get("finished_at", ""),
+                results=tuple(),  # results decoded below
+                summary=dict(data.get("summary", {})),
+                metrics=dict(data.get("metrics", {})),
+            )
+            # Reconstruct results so the markdown rows render.
+            from .evals.runner import EvalResult as _EvalResult
+            decoded_results = []
+            for r in data.get("results") or []:
+                decoded_results.append(
+                    _EvalResult(
+                        eval_id=str(r.get("eval_id", "")),
+                        category=str(r.get("category", "")),
+                        claim_ids=tuple(r.get("claim_ids") or ()),
+                        status=str(r.get("status", "skip")),
+                        detail=str(r.get("detail", "")),
+                        metrics=dict(r.get("metrics") or {}),
+                        duration_ms=float(r.get("duration_ms") or 0.0),
+                        error=r.get("error"),
+                    )
+                )
+            report = _EvalReport(
+                started_at=report.started_at,
+                finished_at=report.finished_at,
+                results=tuple(decoded_results),
+                summary=report.summary,
+                metrics=report.metrics,
+            )
+            print(report.to_markdown())
+        else:
+            print(json.dumps(data, indent=2, sort_keys=True))
+        return 0
+
+    return 2
 
 
 def _context_command(args) -> int:

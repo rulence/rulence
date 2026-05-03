@@ -642,6 +642,45 @@ client can drive the handoff without going through the CLI. Local files
 live under `~/.rulence/tasks/<task_id>/`. There is no distributed
 server, no team-wide replication, and no universal runtime adapter.
 
+## Reproducible local evals
+
+Rulence ships a small, deterministic eval suite under `evals/` that
+exercises each category of claim. Cases run in well under a second on a
+laptop and produce a JSON or Markdown report.
+
+```bash
+# Run every eval and emit a JSON report.
+rulence eval run --json --out report.json
+
+# Pretty-print a Markdown summary from a previously written report.
+rulence eval report report.json --markdown
+
+# Filter by category or by the claim id an eval exercises.
+rulence eval run --category memory --category governance
+rulence eval run --claim shared_agent_context
+
+# Tie claim verification to the eval gate. The gate is opt-in.
+rulence claims verify --require-evals
+```
+
+Eval categories:
+
+- `governance/` — dangerous Bash denied, sensitive Read warned, memory
+  write routed through the arbiter, final-response violation detected,
+  low-risk hook latency.
+- `memory/` — Honcho internal read routed correctly, MemPalace external
+  read routed correctly, sensitive memory write denied, contradictory
+  memory items warned.
+- `context/` — relevant fragment selected, duplicate fragment removed,
+  required constraint preserved, compression reduces estimated tokens.
+- `token/` — audit token rollup, large tool result flagged, governance
+  overhead estimated.
+- `cross_agent/` — snapshot handoff, conflict detection, shared context
+  reuse.
+
+Tests are not a substitute for measured production behavior. The evals
+are honest local checks, not a benchmark leaderboard.
+
 ## Honest limitations
 
 This is not full formal verification yet. The MVP has a small explicit

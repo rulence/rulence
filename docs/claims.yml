@@ -800,6 +800,37 @@ claims:
       - "Rulence replaces MemPalace"
     notes: "M11 ships local-file task state at ~/.rulence/tasks/<task_id>/state.json plus an events.jsonl, snapshot-based handoff that references existing ContextStore snapshots, deterministic conflict detection (open blocker vs completion claim, npm/bun-style tool choice, memory negation against decisions, final response vs active forbids, Honcho/MemPalace disagreement), and matching CLI + MCP surfaces. There is no distributed server, no enterprise sync, no vector DB, and no universal runtime adapter. Honcho stays the canonical internal memory backend; MemPalace stays the canonical external memory backend."
 
+  - claim_id: reproducible_local_evals
+    claim_text: "Rulence includes reproducible local evals for governance, memory routing, token estimates, and context budgeting."
+    category: audit
+    status: supported
+    current_evidence:
+      - "src/rulence/evals/runner.py: EvalRunner discovers and runs eval cases"
+      - "evals/governance/: dangerous-bash, sensitive-read, memory-write-routing, final-response-violation, low-risk hook latency"
+      - "evals/memory/: Honcho/MemPalace routing, sensitive write denied, contradictory memory warned"
+      - "evals/context/: relevance, dedupe, constraint preservation, token reduction"
+      - "evals/token/: audit token rollup, large tool result flagging, governance overhead"
+      - "evals/cross_agent/: snapshot handoff, conflict detection, shared context reuse"
+      - "src/rulence/claims.py: validate_with_evals ties supported claims to passing evals when --require-evals is set"
+      - "src/rulence/cli.py: rulence eval run / report subcommands"
+    required_components:
+      - eval_runner
+      - claim_eval_evidence_check
+    acceptance_tests:
+      - tests.test_eval_runner
+      - tests.test_claims_eval_integration
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence includes reproducible local evals for governance, memory routing, token estimates, and context budgeting"
+      - "claim verification can require passing evals"
+      - "rulence eval run produces a JSON or Markdown report"
+    blocked_phrases:
+      - "state-of-the-art"
+      - "guaranteed token reduction"
+      - "all-agent consistency"
+      - "public leaderboard"
+    notes: "Evals are small, local, and deterministic. They live under evals/<category>/ and run in well under a second on a laptop. The verifier's eval gate is opt-in via rulence claims verify --require-evals so day-to-day docs work does not require the eval suite to pass. There is no public leaderboard, no synthetic inflated benchmark, and no LLM-judge eval."
+
   - claim_id: prevents_context_drift
     claim_text: "Rulence prevents context drift in agent conversations."
     category: context
