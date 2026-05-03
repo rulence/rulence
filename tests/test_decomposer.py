@@ -41,6 +41,30 @@ class DecomposerTests(unittest.TestCase):
         self.assertEqual(constraint.condition.lower(), "log")
         self.assertEqual(constraint.target.lower(), "credentials")
 
+    def test_decompose_double_negative_without_yields_requires(self) -> None:
+        dag = decompose_prompt("Never migrate without backup.")
+
+        constraint = dag.root_units[0].constraints[0]
+        self.assertEqual(constraint.kind, "requires")
+        self.assertEqual(constraint.condition.lower(), "migrate")
+        self.assertEqual(constraint.target.lower(), "backup")
+
+    def test_decompose_double_negative_unless_yields_requires(self) -> None:
+        dag = decompose_prompt("Don't deploy unless tested.")
+
+        constraint = dag.root_units[0].constraints[0]
+        self.assertEqual(constraint.kind, "requires")
+        self.assertEqual(constraint.condition.lower(), "deploy")
+        self.assertEqual(constraint.target.lower(), "tested")
+
+    def test_decompose_negative_with_preposition_still_forbids(self) -> None:
+        dag = decompose_prompt("Never auth with JWT.")
+
+        constraint = dag.root_units[0].constraints[0]
+        self.assertEqual(constraint.kind, "forbids")
+        self.assertEqual(constraint.condition.lower(), "auth")
+        self.assertEqual(constraint.target.lower(), "jwt")
+
     def test_decompose_handles_markdown_headers(self) -> None:
         dag = decompose_prompt("# Frontend\nBuild UI.\n# Backend\nBuild API.")
 
