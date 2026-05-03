@@ -167,9 +167,16 @@ rulence policy list-available
 rulence policy install secrets git migrations aws payments
 ```
 
-If multiple policy files exist for the same tier, Rulence merges them. Checks,
-warnings, blocks, and constraints are unioned so installed starter policies
-compose instead of shadowing each other.
+If multiple policy files exist for the same tier, Rulence merges them so
+installed starter policies compose instead of shadowing each other:
+
+- `required_checks`, `warn_if`, `block_if`, `constraints` — **unioned**
+  (de-duplicated, order preserved).
+- `decompose_threshold` — **min** wins. Lower threshold = stricter, so the
+  most cautious policy decides when to force decomposition.
+- `decompose_max_depth` — **max** wins. Higher depth = more permissive
+  decomposition; the policy that allows the deepest breakdown decides the cap.
+- `label` — concatenated with `+` for traceability (`secrets+complex`).
 
 Policy files are TOML:
 
