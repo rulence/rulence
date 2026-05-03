@@ -617,6 +617,31 @@ claims:
       - "cross-agent enforcement"
     notes: "Policy can be reused. Real enforcement only where the runner has a hook."
 
+  - claim_id: token_accounting
+    claim_text: "Rulence estimates and reports token usage across governed sessions."
+    category: audit
+    status: supported
+    current_evidence:
+      - "src/rulence/audit/accountant.py: TokenAccountant, TokenEstimate, TokenRollup, TokenBudget"
+      - "src/rulence/cli.py: rulence audit list/show/tokens/report subcommands"
+      - "src/rulence/token_budget.py: estimate_tokens"
+    required_components:
+      - token_accountant
+      - audit_store
+    acceptance_tests:
+      - tests.test_token_accountant
+      - tests.test_audit_reports
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence estimates and reports token usage across governed sessions"
+      - "estimated, not provider-billed"
+      - "audit-side token rollups"
+    blocked_phrases:
+      - "Rulence reduces token cost"
+      - "exact provider billing"
+      - "tracks all model input/output tokens"
+    notes: "Counts come from rulence.token_budget.estimate_tokens (tiktoken when installed; fallback heuristic otherwise) and are recorded as estimates only. M7 ships warn-only token budget enforcement; deny is not yet enforced."
+
   - claim_id: token_savings
     claim_text: "Rulence reduces token usage."
     category: context

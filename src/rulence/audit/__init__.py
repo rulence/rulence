@@ -16,6 +16,12 @@ The audit event schema is versioned via
 """
 from __future__ import annotations
 
+from .accountant import (
+    TokenAccountant,
+    TokenBudget,
+    TokenEstimate,
+    TokenRollup,
+)
 from .correlation import CorrelationContext, CorrelationIdManager, default_state_dir
 from .events import SCHEMA_VERSION, RulenceAuditEvent
 from .store import AuditTraceStore, default_audit_dir
@@ -26,6 +32,10 @@ __all__ = [
     "CorrelationIdManager",
     "RulenceAuditEvent",
     "SCHEMA_VERSION",
+    "TokenAccountant",
+    "TokenBudget",
+    "TokenEstimate",
+    "TokenRollup",
     "default_audit_dir",
     "default_state_dir",
 ]

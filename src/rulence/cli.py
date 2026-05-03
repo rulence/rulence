@@ -190,6 +190,29 @@ def _main(argv: list[str] | None = None) -> int:
     feedback_parser.add_argument("--limit", type=int, help="Limit list output to the most recent N records.")
     feedback_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
+    audit_parser = subparsers.add_parser("audit", help="Inspect runtime audit traces and token estimates.")
+    audit_subparsers = audit_parser.add_subparsers(dest="audit_command", required=True)
+
+    audit_list = audit_subparsers.add_parser("list", help="List session ids that have audit records.")
+    audit_list.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_list.add_argument("--json", action="store_true")
+
+    audit_show = audit_subparsers.add_parser("show", help="Show audit records for a session/corr_id.")
+    audit_show.add_argument("--session", required=True, help="Rulence session id (rs_...).")
+    audit_show.add_argument("--corr", help="Optional corr_id to filter to one turn.")
+    audit_show.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_show.add_argument("--json", action="store_true")
+
+    audit_tokens = audit_subparsers.add_parser("tokens", help="Summarize token estimates by session.")
+    audit_tokens.add_argument("--session", required=True)
+    audit_tokens.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_tokens.add_argument("--json", action="store_true")
+
+    audit_report = audit_subparsers.add_parser("report", help="Full audit report for a session.")
+    audit_report.add_argument("--session", required=True)
+    audit_report.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_report.add_argument("--json", action="store_true")
+
     claims_parser = subparsers.add_parser("claims", help="Inspect and verify the claims ledger.")
     claims_subparsers = claims_parser.add_subparsers(dest="claims_command", required=True)
     claims_verify = claims_subparsers.add_parser("verify", help="Validate docs/claims.yml and scan public copy.")
@@ -523,6 +546,47 @@ def _main(argv: list[str] | None = None) -> int:
             print("feedback recorded")
         return 0
 
+    if args.command == "audit":
+        from .audit import AuditTraceStore, TokenAccountant
+
+        store = AuditTraceStore(args.root) if getattr(args, "root", None) else AuditTraceStore()
+        if args.audit_command == "list":
+            sessions = store.list_sessions()
+            if args.json:
+                print(json.dumps({"sessions": sessions}, indent=2, sort_keys=True))
+            else:
+                for sid in sessions:
+                    print(sid)
+            return 0
+        if args.audit_command == "show":
+            if args.corr:
+                records = store.read_turn(args.session, args.corr)
+            else:
+                records = store.read_session(args.session)
+            if args.json:
+                print(json.dumps(records, indent=2, sort_keys=True))
+            else:
+                for record in records:
+                    print(_format_audit_line(record))
+            return 0
+        if args.audit_command == "tokens":
+            records = store.read_session(args.session)
+            rollup = TokenAccountant().rollup(records)
+            data = rollup.to_dict()
+            if args.json:
+                print(json.dumps(data, indent=2, sort_keys=True))
+            else:
+                _print_token_rollup(args.session, data)
+            return 0
+        if args.audit_command == "report":
+            records = store.read_session(args.session)
+            report = _build_audit_report(args.session, records)
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                _print_audit_report(report)
+            return 0
+
     if args.command == "claims":
         from .claims import load_claims, verify_repo
 
@@ -838,6 +902,15 @@ def _record_audit(
         total_redactions = ev_count + md_count + tn_count + pn_count
         all_types = tuple([*ev_types, *md_types, *tn_types, *pn_types])
 
+        # Top-level token_estimate on the audit event mirrors the sum of
+        # input + output estimates that callers stored in metadata. None
+        # if neither was recorded for this event type.
+        in_est = red_metadata.get("input_estimate") if isinstance(red_metadata, dict) else None
+        out_est = red_metadata.get("output_estimate") if isinstance(red_metadata, dict) else None
+        token_total: int | None = None
+        if isinstance(in_est, int) or isinstance(out_est, int):
+            token_total = int(in_est or 0) + int(out_est or 0)
+
         event = RulenceAuditEvent.now(
             event_type=event_type,
             session_id=ctx.rulence_session_id,
@@ -849,7 +922,7 @@ def _record_audit(
             tool_name=red_tool_name,
             redaction_count=total_redactions,
             redaction_types=all_types,
-            token_estimate=None,
+            token_estimate=token_total,
             payload_redacted=total_redactions > 0,
             raw_payload_hash=raw_payload_hash,
             metadata=red_metadata,
@@ -860,6 +933,7 @@ def _record_audit(
 
 
 def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
+    from .token_budget import estimate_tokens
     from .tool_risk import ToolRiskClassifier
 
     tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
@@ -871,10 +945,19 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         runner="claude_code",
     )
 
+    # Estimate the synthesized task text as the input side of this event.
+    task_text = _claude_tool_task(payload)
+    in_count, in_method = (
+        estimate_tokens(task_text) if task_text else (0, "none")
+    )
+
     base_metadata = {
         "fast_path": not classification.should_run_full_preflight,
         "risk_level": classification.risk_level,
         "risk_reasons": list(classification.risk_reasons),
+        "input_estimate": in_count,
+        "output_estimate": 0,
+        "estimator_name": in_method,
     }
 
     # Fast path: no policy load, no preflight, no memory call. Audit and allow.
@@ -1000,7 +1083,16 @@ def _claude_code_sessionstart(payload: dict) -> dict:
 
 
 def _claude_code_userpromptsubmit(payload: dict) -> dict:
-    _record_audit(payload, "UserPromptSubmit")
+    from .token_budget import estimate_tokens
+
+    prompt = str(payload.get("prompt") or payload.get("user_message") or "")
+    in_count, in_method = estimate_tokens(prompt) if prompt else (0, "none")
+    metadata = {
+        "input_estimate": in_count,
+        "output_estimate": 0,
+        "estimator_name": in_method,
+    }
+    _record_audit(payload, "UserPromptSubmit", metadata=metadata)
     return {"suppressOutput": True}
 
 
@@ -1034,6 +1126,12 @@ def _claude_code_posttooluse(payload: dict) -> dict:
         "filtered_token_estimate": review.filtered_token_estimate,
         "safe_for_model_context": review.safe_for_model_context,
         "suggested_action": review.suggested_action,
+        # M7 accounting: PostToolUse is an output event from the tool's
+        # perspective. Use the original (pre-redaction, pre-compaction)
+        # estimate as what the model effectively saw.
+        "input_estimate": 0,
+        "output_estimate": review.original_token_estimate,
+        "estimator_name": "tool_result_reviewer",
     }
     if review.summary is not None:
         metadata["summary_omitted_sections"] = list(review.summary.omitted_sections)
@@ -1102,6 +1200,11 @@ def _claude_code_stop(payload: dict) -> dict:
         transcript=transcript_text,
     )
 
+    from .token_budget import estimate_tokens as _estimate_tokens
+
+    final_tokens, final_method = (
+        _estimate_tokens(final_response) if final_response else (0, "none")
+    )
     metadata = {
         "review_status": review.status,
         "suggested_action": review.suggested_action,
@@ -1111,6 +1214,10 @@ def _claude_code_stop(payload: dict) -> dict:
         "secret_finding_count": len(review.secret_findings),
         "audit_records_inspected": len(audit_records),
         "stop_hook_active": stop_hook_active,
+        # M7 accounting: the final response is the output side of Stop.
+        "input_estimate": 0,
+        "output_estimate": final_tokens,
+        "estimator_name": final_method,
     }
 
     _record_audit(
@@ -1179,6 +1286,108 @@ def _claude_tool_task(payload: dict) -> str:
 def _hook_reason(prefix: str, details: tuple[str, ...]) -> str:
     detail = "; ".join(details[:3]) if details else "no detail"
     return f"{prefix}: {detail}"
+
+
+def _format_audit_line(record: dict) -> str:
+    timestamp = record.get("timestamp", "")
+    event_type = record.get("event_type", "?")
+    decision = record.get("decision") or "-"
+    tool = record.get("tool_name") or "-"
+    redactions = record.get("redaction_count", 0)
+    tokens = record.get("token_estimate")
+    token_str = f"{tokens}t" if isinstance(tokens, int) else "-"
+    return f"{timestamp} {event_type:18s} decision={decision:8s} tool={tool:30s} redactions={redactions} tokens={token_str}"
+
+
+def _print_token_rollup(session_id: str, data: dict) -> None:
+    print(f"session: {session_id}")
+    print(f"total_estimated:        {data['total_estimated']}")
+    print(f"total_estimated_input:  {data['total_estimated_input']}")
+    print(f"total_estimated_output: {data['total_estimated_output']}")
+    print(f"rulence_overhead_estimate: {data['rulence_overhead_estimate']}")
+    print("by_event_type:")
+    for k, v in sorted(data["by_event_type"].items()):
+        print(f"  {k:20s} {v}")
+    if data["by_tool"]:
+        print("by_tool:")
+        for k, v in sorted(data["by_tool"].items()):
+            print(f"  {k:30s} {v}")
+    if data["by_memory_backend"]:
+        print("by_memory_backend:")
+        for k, v in sorted(data["by_memory_backend"].items()):
+            print(f"  {k:20s} {v}")
+    if data["by_corr_id"]:
+        print("by_corr_id:")
+        for k, v in sorted(data["by_corr_id"].items()):
+            print(f"  {k:25s} {v}")
+
+
+def _build_audit_report(session_id: str, records: list[dict]) -> dict:
+    from .audit import TokenAccountant
+
+    rollup = TokenAccountant().rollup(records)
+
+    decisions: dict[str, int] = {}
+    tools: dict[str, int] = {}
+    redactions = 0
+    redaction_types: dict[str, int] = {}
+    final_review_status: str | None = None
+    pretooluse_count = 0
+    posttooluse_count = 0
+
+    for record in records:
+        decision = record.get("decision")
+        if decision:
+            decisions[decision] = decisions.get(decision, 0) + 1
+        tool = record.get("tool_name")
+        if tool:
+            tools[tool] = tools.get(tool, 0) + 1
+        redactions += int(record.get("redaction_count") or 0)
+        for rt in record.get("redaction_types") or []:
+            redaction_types[rt] = redaction_types.get(rt, 0) + 1
+        if record.get("event_type") == "PreToolUse":
+            pretooluse_count += 1
+        if record.get("event_type") == "PostToolUse":
+            posttooluse_count += 1
+        if record.get("event_type") == "Stop":
+            meta = record.get("metadata") or {}
+            final_review_status = meta.get("review_status") or final_review_status
+
+    return {
+        "session_id": session_id,
+        "record_count": len(records),
+        "tokens": rollup.to_dict(),
+        "decisions": dict(sorted(decisions.items())),
+        "tool_call_counts": dict(sorted(tools.items())),
+        "redaction_count": redactions,
+        "redaction_types": dict(sorted(redaction_types.items())),
+        "final_review_status": final_review_status,
+        "pretooluse_count": pretooluse_count,
+        "posttooluse_count": posttooluse_count,
+    }
+
+
+def _print_audit_report(report: dict) -> None:
+    print(f"session: {report['session_id']}")
+    print(f"record_count: {report['record_count']}")
+    print(f"pretooluse_count: {report['pretooluse_count']}")
+    print(f"posttooluse_count: {report['posttooluse_count']}")
+    print(f"final_review_status: {report['final_review_status']}")
+    print(f"redaction_count: {report['redaction_count']}")
+    if report["redaction_types"]:
+        print("redaction_types:")
+        for k, v in report["redaction_types"].items():
+            print(f"  {k:30s} {v}")
+    if report["decisions"]:
+        print("decisions:")
+        for k, v in report["decisions"].items():
+            print(f"  {k:10s} {v}")
+    if report["tool_call_counts"]:
+        print("tools:")
+        for k, v in report["tool_call_counts"].items():
+            print(f"  {k:30s} {v}")
+    print()
+    _print_token_rollup(report["session_id"], report["tokens"])
 
 
 def _print(data: dict, as_json: bool) -> None:

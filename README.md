@@ -567,6 +567,13 @@ about what's enforced and what isn't:
   contract; subsequent re-stops audit only. Rulence does **not**
   guarantee correct answers and does **not** prevent all
   hallucinations.
+- Each audit record carries an `input_estimate` and `output_estimate`
+  in metadata plus a top-level `token_estimate`. Inspect a session
+  with `rulence audit list`, `rulence audit show --session <rs_...>`,
+  `rulence audit tokens --session <rs_...>`, or
+  `rulence audit report --session <rs_...>`. These are **estimates**,
+  not provider-billed actuals — Rulence does **not** report exact
+  provider billing.
 - Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
   PEM private keys, basic-auth and database URLs, `KEY=value` env-style
   assignments) before audit storage, session/trace persistence, and feedback
