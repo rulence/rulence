@@ -665,6 +665,26 @@ def _optional_payload_int(input_data: dict, camel_key: str, snake_key: str) -> i
     return int(value)
 
 
+def _claude_hook_transcript(payload: dict) -> str | None:
+    raw_path = payload.get("transcript_path") or payload.get("transcriptPath")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    try:
+        from .transcript import MAX_TRANSCRIPT_BYTES
+        path = Path(raw_path).expanduser()
+        if not path.exists() or not path.is_file():
+            return None
+        if path.stat().st_size > MAX_TRANSCRIPT_BYTES:
+            print(
+                f"warn: Claude Code transcript at {path} exceeds {MAX_TRANSCRIPT_BYTES} bytes; skipping transcript-aware checks",
+                file=sys.stderr,
+            )
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _claude_code_pretooluse(raw_input: str) -> dict:
     payload = json.loads(raw_input) if raw_input.strip() else {}
     if not isinstance(payload, dict):
@@ -673,7 +693,12 @@ def _claude_code_pretooluse(raw_input: str) -> dict:
     if not task.strip():
         return {"suppressOutput": True}
 
-    result = preflight_task(task, policy_dir=os.environ.get("RULENCE_POLICY_DIR"))
+    transcript = _claude_hook_transcript(payload)
+    result = preflight_task(
+        task,
+        policy_dir=os.environ.get("RULENCE_POLICY_DIR"),
+        transcript=transcript,
+    )
     if result.verdict == "block":
         return {
             "hookSpecificOutput": {
