@@ -404,6 +404,66 @@ The `constraint_solver` check blocks only when the same condition and target are
 both required and forbidden. Broad prose contradictions remain warnings because
 they are heuristic.
 
+## Transcript-aware checks
+
+When the conversation transcript is available, three opt-in checks let the
+preflight reason about it:
+
+- `transcript_drift` — warns when the current task shares no keywords with the
+  first user turn. Signals the agent has wandered away from the original goal.
+- `transcript_contradiction` — extracts constraints from the transcript and
+  blocks if the current task references both sides of a `forbids(X, Y)` from
+  earlier in the conversation. Warns when a `requires(X, Y)` is unmet.
+- `transcript_staleness` — lists transcript turns whose keywords no longer
+  overlap with the current task. Pure suggestion, never blocks.
+
+These are deterministic exact-match heuristics — no model dependency. Add them
+to a tier policy to enable:
+
+```toml
+tier = 4
+label = "complex"
+required_checks = ["memory_check", "consistency_check", "transcript_contradiction", "transcript_drift"]
+warn_if = []
+block_if = []
+```
+
+Pass the transcript any of these ways. All paths cap at 1 MB:
+
+```bash
+rulence preflight "deploy on friday" --transcript ./conversation.jsonl
+cat conversation.jsonl | rulence preflight "deploy on friday" --transcript-stdin
+
+# MCP arg (inline or path):
+{"name": "rulence_preflight",
+ "arguments": {"task": "...", "transcript": "..."}}
+{"name": "rulence_preflight",
+ "arguments": {"task": "...", "transcript_path": "/path/to/conversation.jsonl"}}
+```
+
+If the policy lists a transcript-aware check but no transcript is supplied, the
+check passes quietly with `"no transcript provided"` rather than failing — so a
+single policy file works whether or not the runner has transcript access.
+
+**Claude Code automatic pickup:** the PreToolUse hook payload already carries
+`transcript_path` on every call. The bundled hook handler reads it
+automatically — no installer flag, no config. Add the checks to a policy and
+they activate the next time Claude Code runs the hook.
+
+Supported transcript formats:
+- JSONL with `{"role": "user|assistant|system|tool", "content": "..."}` per line
+- JSONL with `content` as a list of `{"type": "text", "text": "..."}` blocks
+  (extracts text-type blocks, ignores tool_use)
+- Claude Code's nested `{"type": "user", "message": {...}}` form
+- Plain text (treated as a single user turn)
+
+Malformed JSONL falls back to plain text so a partially corrupt file still
+produces something usable.
+
+**Privacy note:** transcripts fed into Rulence reach process memory and, if a
+`--session-id` is used, may end up on disk in the trace JSON. Don't pipe in
+secrets you don't want persisted alongside the trace.
+
 ## Development checks
 
 ```bash
@@ -487,7 +547,14 @@ about what's enforced and what isn't:
 - There is **no team policy distribution, signing, or central audit**. Traces
   in `~/.rulence/sessions` are local JSON files and are also user-writable.
 - There is **no built-in access control or secret redaction**. If you pass a
-  task string containing secrets, Rulence sees and may persist them in traces.
+  task string or transcript containing secrets, Rulence sees them, runs them
+  through the configured checks, and may persist them in trace files.
+- It does **not** auto-summarize or prune the agent's conversation. The
+  transcript-aware checks (above) inspect what they're given and suggest
+  pruning; rewriting the agent's working context is the runner's job.
+- Conversation visibility is **opt-in**. Without `--transcript`,
+  `transcript_path`, or the Claude Code hook auto-pickup, Rulence sees only
+  the current task string and any memory the caller fetched.
 - It is **not a substitute for the agent runner's own permissions**. Treat
   Rulence as one layer in defense-in-depth, not the layer.
 
