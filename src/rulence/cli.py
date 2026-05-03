@@ -1005,8 +1005,48 @@ def _claude_code_userpromptsubmit(payload: dict) -> dict:
 
 
 def _claude_code_posttooluse(payload: dict) -> dict:
+    """Observe and audit a Claude Code PostToolUse event.
+
+    Claude Code's PostToolUse hook can append context but cannot replace
+    the tool result the model already received. Rulence therefore
+    *detects, redacts for audit, warns, and marks unsafe* — it does not
+    filter the result before reinjection.
+    """
+    from .review import ToolResultReviewer
+
     tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
-    _record_audit(payload, "PostToolUse", tool_name=tool_name)
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    tool_output = payload.get("tool_response")
+    if tool_output is None:
+        tool_output = payload.get("tool_output")
+
+    review = ToolResultReviewer().review(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        tool_output=tool_output,
+    )
+
+    metadata: dict = {
+        "review_status": review.status,
+        "redaction_count": review.redaction_count,
+        "redaction_types": list(review.redaction_types),
+        "original_token_estimate": review.original_token_estimate,
+        "filtered_token_estimate": review.filtered_token_estimate,
+        "safe_for_model_context": review.safe_for_model_context,
+        "suggested_action": review.suggested_action,
+    }
+    if review.summary is not None:
+        metadata["summary_omitted_sections"] = list(review.summary.omitted_sections)
+        metadata["summary_retained_fact_count"] = len(review.summary.retained_facts)
+
+    _record_audit(
+        payload,
+        "PostToolUse",
+        decision=review.status,
+        evidence=review.evidence,
+        tool_name=tool_name,
+        metadata=metadata,
+    )
     return {"suppressOutput": True}
 
 

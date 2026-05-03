@@ -46,6 +46,44 @@ claims:
     blocked_phrases: []
     notes: "Only Claude Code has a real runtime gate today."
 
+  - claim_id: posttooluse_observed_redaction
+    claim_text: "Rulence inspects and redacts observed Claude Code tool results before audit storage."
+    category: audit
+    status: supported
+    current_evidence:
+      - "src/rulence/review/tool_result.py: ToolResultReviewer and ToolResultSummary"
+      - "src/rulence/cli.py: _claude_code_posttooluse calls the reviewer and audits the verdict"
+      - "src/rulence/security/redactor.py: SecretRedactor"
+    required_components:
+      - tool_result_reviewer
+      - secret_redactor
+    acceptance_tests:
+      - tests.test_tool_result_reviewer
+      - tests.test_posttooluse_filtering
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence inspects and redacts observed Claude Code tool results before audit storage"
+      - "tool-result review at the PostToolUse audit boundary"
+      - "deterministic compaction for large tool outputs"
+    blocked_phrases: []
+    notes: "Observation-only. The PostToolUse hook in Claude Code can append context but cannot replace the tool result the model has already received. Treat ``safe_for_model_context`` as advisory."
+
+  - claim_id: posttooluse_filter_before_reinjection
+    claim_text: "Rulence filters tool results before re-entry into model context (roadmap)."
+    category: enforcement
+    status: aspirational
+    current_evidence: []
+    required_components:
+      - hook_runtime_with_result_replacement
+    acceptance_tests: []
+    public_copy_allowed: false
+    allowed_phrasings: []
+    blocked_phrases:
+      - "filters tool results before re-entry"
+      - "prevents tool-result reinjection"
+      - "rewrites tool results before the model sees them"
+    notes: "Requires a runtime hook capable of replacing the tool result. Claude Code's PostToolUse hook does not currently support that; only additionalContext can be appended."
+
   - claim_id: claude_code_universal_pretooluse
     claim_text: "Rulence observes and governs Claude Code PreToolUse events across all tool calls through a universal matcher (Claude Code only, not all runtimes)."
     category: enforcement

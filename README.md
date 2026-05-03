@@ -551,6 +551,13 @@ about what's enforced and what isn't:
   Glob, Grep, WebFetch, MCP). Cursor and n8n integrations remain advisory.
   Universal PreToolUse coverage applies to Claude Code only — not all
   runtimes.
+- On PostToolUse, Rulence inspects the tool result, redacts known secret
+  formats before writing the audit record, and flags large/binary/unsafe
+  outputs. It does **not** filter the result before the model re-reads
+  it: Claude Code's PostToolUse hook can append context but cannot
+  replace the result the model already received. Treat the
+  ``safe_for_model_context`` field on PostToolUse audit records as an
+  advisory signal, not a runtime guarantee.
 - Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
   PEM private keys, basic-auth and database URLs, `KEY=value` env-style
   assignments) before audit storage, session/trace persistence, and feedback
