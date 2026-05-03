@@ -270,5 +270,110 @@ class PreflightTranscriptIntegrationTests(unittest.TestCase):
             self.assertIn("no transcript", drift_check.detail)
 
 
+class McpTranscriptTests(unittest.TestCase):
+    def _policy_dir(self, base: str, tier: int, check: str) -> str:
+        path = Path(base) / f"tier-{tier}-tx.toml"
+        path.write_text(
+            f'tier = {tier}\nlabel = "tx"\n'
+            f'required_checks = ["{check}"]\nwarn_if = []\nblock_if = []\n',
+            encoding="utf-8",
+        )
+        return base
+
+    def test_mcp_preflight_blocks_with_inline_transcript(self) -> None:
+        from rulence.mcp_server import handle_request
+
+        task = "deploy the app on friday this week"
+        from rulence.classifier import classify_task
+        tier = classify_task(task).tier
+
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = self._policy_dir(directory, tier, CHECK_TRANSCRIPT_CONTRADICTION)
+
+            response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "rulence_preflight",
+                        "arguments": {
+                            "task": task,
+                            "policy_dir": policy_dir,
+                            "transcript": "don't deploy on friday",
+                        },
+                    },
+                }
+            )
+
+        payload = response["result"]["structuredContent"]
+        self.assertEqual(payload["verdict"], "block")
+
+    def test_mcp_preflight_reads_transcript_path_server_side(self) -> None:
+        from rulence.mcp_server import handle_request
+
+        task = "deploy the app on friday this week"
+        from rulence.classifier import classify_task
+        tier = classify_task(task).tier
+
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = self._policy_dir(directory, tier, CHECK_TRANSCRIPT_CONTRADICTION)
+            transcript_path = Path(directory) / "transcript.jsonl"
+            transcript_path.write_text(
+                json.dumps({"role": "user", "content": "don't deploy on friday"}) + "\n",
+                encoding="utf-8",
+            )
+
+            response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "rulence_preflight",
+                        "arguments": {
+                            "task": task,
+                            "policy_dir": policy_dir,
+                            "transcript_path": str(transcript_path),
+                        },
+                    },
+                }
+            )
+
+        payload = response["result"]["structuredContent"]
+        self.assertEqual(payload["verdict"], "block")
+
+    def test_mcp_preflight_silently_falls_back_when_transcript_path_missing(self) -> None:
+        from rulence.mcp_server import handle_request
+
+        task = "deploy the app on friday this week"
+        from rulence.classifier import classify_task
+        tier = classify_task(task).tier
+
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = self._policy_dir(directory, tier, CHECK_TRANSCRIPT_CONTRADICTION)
+
+            response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "rulence_preflight",
+                        "arguments": {
+                            "task": task,
+                            "policy_dir": policy_dir,
+                            "transcript_path": "/no/such/transcript.jsonl",
+                        },
+                    },
+                }
+            )
+
+        payload = response["result"]["structuredContent"]
+        check = next(c for c in payload["checks"] if c["name"] == CHECK_TRANSCRIPT_CONTRADICTION)
+        self.assertEqual(check["status"], "pass")
+        self.assertIn("no transcript", check["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

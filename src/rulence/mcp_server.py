@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from ._jsonrpc import read_message, write_message
 from .classifier import classify_task
 from .decomposer import decompose_prompt
+from .transcript import MAX_TRANSCRIPT_BYTES
 from .memory import memory_health, mempalace_rooms, mempalace_wings
 from .preflight import preflight_task
 from .reasoning import add_thought, start_session, summarize_session
@@ -85,6 +87,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             task,
             memory=str(arguments.get("memory", "")),
             policy_dir=arguments.get("policy_dir"),
+            transcript=_optional_transcript(arguments),
         ).to_dict()
     elif name == "rulence_start_thinking":
         task = _required_text(arguments, "task")
@@ -93,6 +96,7 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             memory=str(arguments.get("memory", "")),
             policy_dir=arguments.get("policy_dir"),
             session_id=arguments.get("session_id"),
+            transcript=_optional_transcript(arguments),
         )
         store.save(session)
         payload = session.to_dict()
@@ -227,6 +231,8 @@ def _tools() -> list[dict[str, Any]]:
                     "task": {"type": "string", "description": "Task the agent is about to perform."},
                     "memory": {"type": "string", "description": "Optional local memory/context."},
                     "policy_dir": {"type": "string", "description": "Optional local policy directory."},
+                    "transcript": {"type": "string", "description": "Optional conversation transcript (JSONL or plain text) for transcript-aware checks."},
+                    "transcript_path": {"type": "string", "description": "Optional path to a transcript file. Read server-side; ignored if transcript is also supplied."},
                 },
                 "required": ["task"],
             },
@@ -241,6 +247,8 @@ def _tools() -> list[dict[str, Any]]:
                     "memory": {"type": "string", "description": "Optional local memory/context."},
                     "policy_dir": {"type": "string", "description": "Optional local policy directory."},
                     "session_id": {"type": "string", "description": "Optional caller-provided session id."},
+                    "transcript": {"type": "string", "description": "Optional conversation transcript (JSONL or plain text) for transcript-aware checks."},
+                    "transcript_path": {"type": "string", "description": "Optional path to a transcript file. Read server-side; ignored if transcript is also supplied."},
                 },
                 "required": ["task"],
             },
@@ -380,6 +388,24 @@ def _log_thought(
     else:
         label = f"Thought {thought_number}/{total_thoughts}"
     print(f"[rulence:{label}] {thought}", file=sys.stderr)
+
+
+def _optional_transcript(arguments: dict[str, Any]) -> str | None:
+    inline = arguments.get("transcript")
+    if isinstance(inline, str) and inline.strip():
+        return inline
+    raw_path = arguments.get("transcript_path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    path = Path(raw_path).expanduser()
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        if path.stat().st_size > MAX_TRANSCRIPT_BYTES:
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
 
 def _required_text(arguments: dict[str, Any], key: str) -> str:
