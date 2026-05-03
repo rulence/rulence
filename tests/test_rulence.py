@@ -301,6 +301,25 @@ class RulenceMvpTests(unittest.TestCase):
             self.assertEqual(loaded.session_id, "demo")
             self.assertEqual(len(loaded.steps), 1)
 
+    def test_session_store_concurrent_writes_leave_valid_json(self) -> None:
+        import os
+        import threading
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(directory)
+            sessions = [start_session(f"task {i}", session_id="shared") for i in range(20)]
+            threads = [threading.Thread(target=store.save, args=(s,)) for s in sessions]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            loaded = store.load("shared")
+            self.assertEqual(loaded.session_id, "shared")
+            self.assertTrue(loaded.task.startswith("task "))
+            leftovers = [name for name in os.listdir(directory) if ".tmp" in name]
+            self.assertEqual(leftovers, [])
+
     def test_policy_validation_accepts_default_policies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             write_default_policies(directory)
