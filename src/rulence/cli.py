@@ -871,7 +871,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         runner="claude_code",
     )
 
-    fast_path_metadata = {
+    base_metadata = {
         "fast_path": not classification.should_run_full_preflight,
         "risk_level": classification.risk_level,
         "risk_reasons": list(classification.risk_reasons),
@@ -884,11 +884,13 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             "PreToolUse",
             decision="approve",
             tool_name=tool_name,
-            metadata=fast_path_metadata,
+            metadata=base_metadata,
         )
         return {"suppressOutput": True}
 
-    # Full path: preserve existing PreToolUse behavior.
+    # Full path: existing preflight behavior, with severity escalation
+    # for high/critical classifier verdicts so the universal matcher
+    # never silently allows a clearly destructive call.
     task = _claude_tool_task(payload)
     if not task.strip():
         _record_audit(
@@ -896,7 +898,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             "PreToolUse",
             decision="approve",
             tool_name=tool_name,
-            metadata={**fast_path_metadata, "reason": "no_task"},
+            metadata={**base_metadata, "reason": "no_task"},
         )
         return {"suppressOutput": True}
 
@@ -907,26 +909,46 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         transcript=transcript,
     )
     policy_ref = getattr(result.policy, "ref", None)
+    checks_run = [check.name for check in result.checks]
+    required_followups = list(result.next_steps)
+    escalated_action = _escalate_action_for_risk(classification.risk_level, result.verdict)
 
-    if result.verdict == "block":
+    full_metadata = {
+        **base_metadata,
+        "preflight_verdict": result.verdict,
+        "checks_run": checks_run,
+        "required_followups": required_followups,
+    }
+
+    if escalated_action == "deny":
+        evidence = result.blocks or (
+            tuple(classification.risk_reasons) or ("classifier:critical_call",)
+        )
         _record_audit(
             payload,
             "PreToolUse",
             decision="deny",
-            evidence=tuple(result.blocks),
+            evidence=tuple(evidence),
             tool_name=tool_name,
             policy_name=policy_ref,
-            metadata=fast_path_metadata,
+            metadata=full_metadata,
         )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": _hook_reason("Rulence blocked this tool call", result.blocks),
+                "permissionDecisionReason": _hook_reason(
+                    "Rulence blocked this tool call", evidence
+                ),
             }
         }
-    if result.verdict == "warn":
-        evidence = result.warnings or result.next_steps
+    if escalated_action == "ask":
+        evidence = (
+            result.warnings
+            or result.next_steps
+            or tuple(classification.risk_reasons)
+            or ("classifier:high_risk_call",)
+        )
         _record_audit(
             payload,
             "PreToolUse",
@@ -934,7 +956,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             evidence=tuple(evidence),
             tool_name=tool_name,
             policy_name=policy_ref,
-            metadata=fast_path_metadata,
+            metadata=full_metadata,
         )
         return {
             "hookSpecificOutput": {
@@ -949,9 +971,27 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         decision="approve",
         tool_name=tool_name,
         policy_name=policy_ref,
-        metadata=fast_path_metadata,
+        metadata=full_metadata,
     )
     return {"suppressOutput": True}
+
+
+def _escalate_action_for_risk(risk_level: str, preflight_verdict: str) -> str:
+    """Combine classifier severity with preflight verdict.
+
+    Deterministic rule: ``critical`` always denies, ``high`` always at
+    least asks, ``medium`` follows preflight, ``low`` is fast-pathed
+    upstream and never reaches here. This keeps risky calls from
+    silently passing through a permissive policy file.
+    """
+    base = {"approve": "allow", "warn": "ask", "block": "deny"}.get(
+        preflight_verdict, "ask"
+    )
+    if risk_level == "critical":
+        return "deny"
+    if risk_level == "high":
+        return "deny" if base == "deny" else "ask"
+    return base
 
 
 def _claude_code_sessionstart(payload: dict) -> dict:

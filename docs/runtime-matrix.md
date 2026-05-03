@@ -11,7 +11,7 @@ implemented; see notes.
 
 | Runtime | User prompt visibility | Tool call visibility | Tool result visibility | Final response visibility | Can block tool calls | Can modify tool calls | Can enforce memory policy | Can enforce token policy | Current status | Claim-safe wording |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | partial (transcript when supplied to hook) | y (PreToolUse hook payload) | n | n | y (deny/ask via hook) | n | n | n | supported PreToolUse gate | "Rulence runs as a Claude Code PreToolUse hook and can block or ask before tool calls." |
+| Claude Code | partial (transcript when supplied to hook) | y (universal PreToolUse hook payload, every tool) | n | n | y (deny/ask via hook) | n | n | n | supported universal PreToolUse | "Rulence runs as a Claude Code PreToolUse hook with a universal matcher and can block or ask before any tool call (Claude Code only)." |
 | Cursor | n (only when host calls preflight) | n | n | n | advisory | n | n | n | advisory rule only | "Rulence ships an advisory Cursor project rule; enforcement depends on the model." |
 | n8n | n (only when workflow calls the MCP tool) | n | n | n | advisory | n | n | n | advisory MCP integration | "Rulence ships an advisory n8n MCP integration; whether the workflow consults Rulence is up to the workflow author." |
 | MCP-only clients | n (only what the client passes in) | n | n | n | advisory | n | n | n | advisory unless host enforces | "Rulence exposes an MCP stdio server; enforcement requires the host to consult Rulence before each tool call." |
@@ -46,9 +46,17 @@ implemented; see notes.
 - A deterministic ``ToolRiskClassifier`` runs before the full
   preflight on Claude Code PreToolUse events. Low-risk classifications
   audit and allow without loading policy files or running checks;
-  medium/high/critical fall through to the existing preflight. This
-  is internal scaffolding for future broader hook coverage and is
-  not yet a license to install universal ``*`` matchers.
+  medium/high/critical fall through to the existing preflight, with
+  ``critical`` always denying and ``high`` always at-least-asking.
+- Claude Code's PreToolUse matcher is now ``"*"`` for fresh installs.
+  Existing M1/M3 bounded installations are preserved unless
+  ``rulence install claude-code --force`` is used to migrate. The
+  universal matcher applies to Claude Code only — Cursor, n8n, and
+  other runners remain advisory.
+- PostToolUse keeps bounded matchers (``Bash|Edit|Write``,
+  ``Read|Glob|Grep``, ``WebFetch``, ``mcp__.*``) because PostToolUse
+  has no fast-path classifier yet and a universal matcher there has
+  not been latency-tested.
 
 ## How to use this matrix
 

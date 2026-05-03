@@ -11,6 +11,7 @@ from rulence.installers import (
     LEGACY_PRETOOLUSE_COMMAND,
     MATCHED_EVENTS,
     RULENCE_HOOK_COMMAND,
+    UNIVERSAL_PRETOOLUSE_MATCHER,
     UNMATCHED_EVENTS,
     install_claude_code,
 )
@@ -27,27 +28,37 @@ def _flat_matchers(entries) -> list[str | None]:
 
 
 class SafeVisibilityInstallerTests(unittest.TestCase):
-    def test_installer_does_not_install_universal_matcher(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with patch("rulence.installers.Path.home", return_value=Path(directory)):
-                install_claude_code()
-            settings = _read_settings(Path(directory))
-        for event in MATCHED_EVENTS:
-            matchers = _flat_matchers(settings["hooks"][event])
-            self.assertNotIn("*", matchers, f"event {event} contains '*'")
-            self.assertNotIn("", matchers, f"event {event} contains empty matcher")
-            self.assertNotIn(".*", matchers, f"event {event} contains '.*'")
-
-    def test_installer_writes_bounded_matchers_for_pre_and_post(self) -> None:
+    def test_pretooluse_uses_universal_matcher_post_m4(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with patch("rulence.installers.Path.home", return_value=Path(directory)):
                 install_claude_code()
             settings = _read_settings(Path(directory))
 
-        for event in MATCHED_EVENTS:
-            matchers = set(_flat_matchers(settings["hooks"][event]))
-            for required in BOUNDED_TOOL_MATCHERS:
-                self.assertIn(required, matchers, f"missing {required} in {event}")
+        pre_matchers = _flat_matchers(settings["hooks"]["PreToolUse"])
+        # Exactly one Rulence PreToolUse entry, with matcher "*".
+        self.assertIn(UNIVERSAL_PRETOOLUSE_MATCHER, pre_matchers)
+        rulence_pre_entries = [
+            e
+            for e in settings["hooks"]["PreToolUse"]
+            if RULENCE_HOOK_COMMAND in json.dumps(e)
+        ]
+        self.assertEqual(len(rulence_pre_entries), 1)
+        self.assertEqual(
+            rulence_pre_entries[0].get("matcher"),
+            UNIVERSAL_PRETOOLUSE_MATCHER,
+        )
+
+    def test_posttooluse_keeps_bounded_matchers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("rulence.installers.Path.home", return_value=Path(directory)):
+                install_claude_code()
+            settings = _read_settings(Path(directory))
+
+        post_matchers = set(_flat_matchers(settings["hooks"]["PostToolUse"]))
+        # PostToolUse remains bounded in M4 (no '*' there).
+        self.assertNotIn(UNIVERSAL_PRETOOLUSE_MATCHER, post_matchers)
+        for required in BOUNDED_TOOL_MATCHERS:
+            self.assertIn(required, post_matchers, f"missing {required} in PostToolUse")
 
     def test_installer_writes_unmatched_lifecycle_events(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -124,12 +135,20 @@ class SafeVisibilityInstallerTests(unittest.TestCase):
 
         self.assertEqual(first["status"], "installed")
         self.assertEqual(second["status"], "already_installed")
-        for event in MATCHED_EVENTS:
-            matchers = _flat_matchers(settings["hooks"][event])
-            for matcher in BOUNDED_TOOL_MATCHERS:
-                self.assertEqual(
-                    matchers.count(matcher), 1, f"{event}:{matcher} duplicated"
-                )
+        # PreToolUse: exactly one Rulence entry with matcher "*".
+        pre_rulence = [
+            e
+            for e in settings["hooks"]["PreToolUse"]
+            if RULENCE_HOOK_COMMAND in json.dumps(e)
+        ]
+        self.assertEqual(len(pre_rulence), 1)
+        self.assertEqual(pre_rulence[0].get("matcher"), UNIVERSAL_PRETOOLUSE_MATCHER)
+        # PostToolUse: each bounded matcher present exactly once.
+        post_matchers = _flat_matchers(settings["hooks"]["PostToolUse"])
+        for matcher in BOUNDED_TOOL_MATCHERS:
+            self.assertEqual(
+                post_matchers.count(matcher), 1, f"PostToolUse:{matcher} duplicated"
+            )
 
     def test_force_replaces_only_existing_rulence_entries(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -167,15 +186,18 @@ class SafeVisibilityInstallerTests(unittest.TestCase):
         pre_entries = settings["hooks"]["PreToolUse"]
         keep_me = [e for e in pre_entries if "keep-me" in json.dumps(e)]
         self.assertEqual(len(keep_me), 1)
-        # And we still have exactly one rulence entry per bounded matcher.
+        # And exactly one Rulence PreToolUse entry, with universal matcher.
+        rulence_pre = [
+            e for e in pre_entries if RULENCE_HOOK_COMMAND in json.dumps(e)
+        ]
+        self.assertEqual(len(rulence_pre), 1)
+        self.assertEqual(rulence_pre[0].get("matcher"), UNIVERSAL_PRETOOLUSE_MATCHER)
+        # PostToolUse still has each bounded matcher exactly once.
+        post_matchers = _flat_matchers(settings["hooks"]["PostToolUse"])
         for matcher in BOUNDED_TOOL_MATCHERS:
-            rulence_for_matcher = [
-                e
-                for e in pre_entries
-                if e.get("matcher") == matcher
-                and RULENCE_HOOK_COMMAND in json.dumps(e)
-            ]
-            self.assertEqual(len(rulence_for_matcher), 1)
+            self.assertEqual(
+                post_matchers.count(matcher), 1, f"PostToolUse:{matcher} duplicated"
+            )
 
     def test_legacy_pretooluse_hook_is_recognized_as_rulence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -206,12 +228,21 @@ class SafeVisibilityInstallerTests(unittest.TestCase):
                 install_claude_code()
             settings = _read_settings(home)
 
-        # Without --force, the legacy entry stays and we don't create a
-        # second Bash|Edit|Write Rulence hook.
+        # Without --force, an existing legacy Rulence PreToolUse entry is
+        # preserved verbatim; no second Rulence entry is added on top.
         pre_entries = settings["hooks"]["PreToolUse"]
         bash_edit_write = [e for e in pre_entries if e.get("matcher") == "Bash|Edit|Write"]
         self.assertEqual(len(bash_edit_write), 1)
         self.assertIn(LEGACY_PRETOOLUSE_COMMAND, json.dumps(bash_edit_write[0]))
+        # And no universal Rulence entry was created (force migration is
+        # required to upgrade to the M4 universal matcher).
+        universal = [
+            e
+            for e in pre_entries
+            if e.get("matcher") == UNIVERSAL_PRETOOLUSE_MATCHER
+            and RULENCE_HOOK_COMMAND in json.dumps(e)
+        ]
+        self.assertEqual(universal, [])
 
     def test_backup_is_written_when_settings_exist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

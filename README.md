@@ -546,8 +546,11 @@ Rulence is a **local advisory layer**, not a sandbox. Be explicit with yourself
 about what's enforced and what isn't:
 
 - It does **not** intercept tool calls on its own. Enforcement comes from the
-  host runner's hook system. Today only the Claude Code installer wires a real
-  PreToolUse gate; Cursor and n8n integrations are advisory.
+  host runner's hook system. The Claude Code installer wires a universal
+  PreToolUse hook that observes every tool call (Bash, Edit, Write, Read,
+  Glob, Grep, WebFetch, MCP). Cursor and n8n integrations remain advisory.
+  Universal PreToolUse coverage applies to Claude Code only — not all
+  runtimes.
 - Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
   PEM private keys, basic-auth and database URLs, `KEY=value` env-style
   assignments) before audit storage, session/trace persistence, and feedback

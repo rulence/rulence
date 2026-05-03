@@ -16,10 +16,14 @@ RULENCE_HOOK_COMMAND = "rulence hook claude-code"
 # compatibility with settings.json files written before M1.
 LEGACY_PRETOOLUSE_COMMAND = "rulence hook claude-code-pretooluse"
 
-# Bounded matchers for PreToolUse and PostToolUse. Universal "*" matchers
-# are deliberately not installed in M1 to avoid a hook-latency regression.
-# Bash|Edit|Write keeps the M0 surface intact; the others extend visibility
-# in tightly scoped slices.
+# Post-M4: PreToolUse uses a single universal matcher. The fast-path tool
+# risk classifier in src/rulence/tool_risk.py keeps low-risk hook latency
+# bounded, so universal coverage is now safe.
+UNIVERSAL_PRETOOLUSE_MATCHER = "*"
+
+# Bounded matchers for PostToolUse. PostToolUse remains bounded in M4
+# because PostToolUse processing has no fast-path classifier yet and a
+# universal "*" matcher there has not been latency-tested.
 BOUNDED_TOOL_MATCHERS: tuple[str, ...] = (
     "Bash|Edit|Write",
     "Read|Glob|Grep",
@@ -119,6 +123,57 @@ def _install_event_with_matchers(
         summary["events_installed"].append(f"{event_name}:{matcher}")
 
 
+def _install_universal_pretooluse(
+    entries: list[Any],
+    *,
+    force: bool,
+    summary: dict[str, list[str]],
+) -> None:
+    """Install a single PreToolUse hook with matcher '*'.
+
+    Migration semantics:
+
+    * Fresh install (no existing Rulence PreToolUse entry): append the
+      universal entry.
+    * Existing Rulence entries (e.g. M1 bounded matchers like
+      ``Bash|Edit|Write``) without ``--force``: leave them alone and
+      skip — the user's existing bounded coverage keeps working.
+    * Existing Rulence entries with ``--force``: remove every Rulence
+      entry and install one universal entry, leaving unrelated user
+      hooks intact.
+    """
+    rulence_indices = [
+        i for i, entry in enumerate(entries) if _is_rulence_entry(entry)
+    ]
+    has_universal = any(
+        _entry_matcher(entries[i]) == UNIVERSAL_PRETOOLUSE_MATCHER
+        for i in rulence_indices
+    )
+
+    if rulence_indices and not force:
+        if has_universal and len(rulence_indices) == 1:
+            summary["events_skipped"].append(
+                f"PreToolUse:{UNIVERSAL_PRETOOLUSE_MATCHER}"
+            )
+        else:
+            summary["events_skipped"].append("PreToolUse:legacy_bounded")
+        return
+
+    if rulence_indices and force:
+        for idx in sorted(rulence_indices, reverse=True):
+            entries.pop(idx)
+        entries.append(_hook_with_matcher(UNIVERSAL_PRETOOLUSE_MATCHER))
+        summary["events_replaced"].append(
+            f"PreToolUse:{UNIVERSAL_PRETOOLUSE_MATCHER}"
+        )
+        return
+
+    entries.append(_hook_with_matcher(UNIVERSAL_PRETOOLUSE_MATCHER))
+    summary["events_installed"].append(
+        f"PreToolUse:{UNIVERSAL_PRETOOLUSE_MATCHER}"
+    )
+
+
 def _install_event_without_matcher(
     entries: list[Any],
     event_name: str,
@@ -172,13 +227,19 @@ def install_claude_code(force: bool = False) -> dict[str, Any]:
 
     for event_name in MATCHED_EVENTS:
         entries = hooks_config.setdefault(event_name, [])
-        _install_event_with_matchers(
-            entries,
-            event_name,
-            BOUNDED_TOOL_MATCHERS,
-            force=force,
-            summary=summary,
-        )
+        if event_name == "PreToolUse":
+            _install_universal_pretooluse(entries, force=force, summary=summary)
+        else:
+            # PostToolUse keeps bounded matchers in M4 because PostToolUse
+            # has no fast-path classifier yet and "*" there has not been
+            # latency-tested.
+            _install_event_with_matchers(
+                entries,
+                event_name,
+                BOUNDED_TOOL_MATCHERS,
+                force=force,
+                summary=summary,
+            )
 
     for event_name in UNMATCHED_EVENTS:
         entries = hooks_config.setdefault(event_name, [])

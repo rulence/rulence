@@ -46,6 +46,30 @@ claims:
     blocked_phrases: []
     notes: "Only Claude Code has a real runtime gate today."
 
+  - claim_id: claude_code_universal_pretooluse
+    claim_text: "Rulence observes and governs Claude Code PreToolUse events across all tool calls through a universal matcher (Claude Code only, not all runtimes)."
+    category: enforcement
+    status: supported
+    current_evidence:
+      - "src/rulence/installers.py: UNIVERSAL_PRETOOLUSE_MATCHER and _install_universal_pretooluse"
+      - "src/rulence/cli.py: _claude_code_pretooluse_dispatch with fast-path classifier and severity escalation"
+      - "src/rulence/tool_risk.py: ToolRiskClassifier"
+    required_components:
+      - tool_risk_classifier
+      - claude_code_hook_handler
+    acceptance_tests:
+      - tests.test_claude_hook_installer_universal
+      - tests.test_universal_pretooluse
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence observes and governs Claude Code PreToolUse events across all tool calls through a universal matcher"
+      - "universal PreToolUse coverage on Claude Code"
+      - "applies to Claude Code hook coverage, not all runtimes"
+    blocked_phrases:
+      - "universal coverage on every runtime"
+      - "universal matcher across all runtimes"
+    notes: "Universal '*' matcher applies to Claude Code PreToolUse only. PostToolUse remains bounded. Cursor and n8n are still advisory. Existing bounded installations are preserved without --force; --force migrates to the universal matcher."
+
   - claim_id: cursor_rule_advisory
     claim_text: "Writes an advisory project rule for Cursor; enforcement depends on the model honoring the rule."
     category: enforcement
