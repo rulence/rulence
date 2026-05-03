@@ -46,6 +46,34 @@ claims:
     blocked_phrases: []
     notes: "Only Claude Code has a real runtime gate today."
 
+  - claim_id: final_response_review
+    claim_text: "Rulence reviews Claude Code final responses against observed trace evidence and deterministic local policy."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/review/final_response.py: FinalResponseReviewer and FinalReviewResult"
+      - "src/rulence/cli.py: _claude_code_stop runs the reviewer and writes a Stop audit record"
+      - "src/rulence/logic.py: parse_constraints"
+      - "src/rulence/security/redactor.py: SecretRedactor"
+    required_components:
+      - final_response_reviewer
+      - audit_store
+      - constraint_parser
+    acceptance_tests:
+      - tests.test_final_response_reviewer
+      - tests.test_stop_hook_final_review
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence reviews Claude Code final responses against observed trace evidence and deterministic local policy"
+      - "deterministic local final-response review"
+      - "Stop-hook review with infinite-loop protection"
+    blocked_phrases:
+      - "Rulence guarantees correct answers"
+      - "Rulence prevents all hallucinations"
+      - "guarantees correct answers"
+      - "prevents all hallucinations"
+    notes: "Reviewer covers secret leakage, requires/forbids constraints, action claims without trace evidence, and unresolved ask/escalation. Stop hook honors stop_hook_active to avoid loops; on fail it requests one continuation only when the runtime is not already inside one."
+
   - claim_id: posttooluse_observed_redaction
     claim_text: "Rulence inspects and redacts observed Claude Code tool results before audit storage."
     category: audit

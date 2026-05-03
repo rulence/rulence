@@ -558,6 +558,15 @@ about what's enforced and what isn't:
   replace the result the model already received. Treat the
   ``safe_for_model_context`` field on PostToolUse audit records as an
   advisory signal, not a runtime guarantee.
+- On Stop, Rulence runs a deterministic final-response review against
+  the observed audit trace: secret leakage, requires/forbids
+  constraints from the user prompt, action claims without a
+  corresponding tool trace, and unresolved ask decisions. On fail and
+  only when the runtime is not already inside a continuation, Rulence
+  may request a single revision via the Stop hook's continuation
+  contract; subsequent re-stops audit only. Rulence does **not**
+  guarantee correct answers and does **not** prevent all
+  hallucinations.
 - Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
   PEM private keys, basic-auth and database URLs, `KEY=value` env-style
   assignments) before audit storage, session/trace persistence, and feedback

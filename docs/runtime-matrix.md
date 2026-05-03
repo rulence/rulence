@@ -11,7 +11,7 @@ implemented; see notes.
 
 | Runtime | User prompt visibility | Tool call visibility | Tool result visibility | Final response visibility | Can block tool calls | Can modify tool calls | Can enforce memory policy | Can enforce token policy | Current status | Claim-safe wording |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | partial (transcript when supplied to hook) | y (universal PreToolUse hook payload, every tool) | partial (PostToolUse: observe + audit only; cannot replace) | n | y (deny/ask via PreToolUse) | n | n | n | supported universal PreToolUse + observed PostToolUse | "Rulence runs as a Claude Code PreToolUse hook with a universal matcher and can block or ask before any tool call. PostToolUse is observed and redacted for audit only — Rulence cannot prevent the model from seeing the raw tool result." |
+| Claude Code | partial (transcript when supplied to hook) | y (universal PreToolUse hook payload, every tool) | partial (PostToolUse: observe + audit only; cannot replace) | partial (Stop-hook final-response review; can request one revision when supported) | y (deny/ask via PreToolUse) | n | n | n | supported PreToolUse + observed PostToolUse + Stop-hook review | "Rulence runs as a Claude Code PreToolUse hook with a universal matcher and can block or ask before any tool call. PostToolUse is observed and redacted for audit only. Stop-hook review is deterministic and may request one continuation when fail is detected; it does not guarantee correct answers." |
 | Cursor | n (only when host calls preflight) | n | n | n | advisory | n | n | n | advisory rule only | "Rulence ships an advisory Cursor project rule; enforcement depends on the model." |
 | n8n | n (only when workflow calls the MCP tool) | n | n | n | advisory | n | n | n | advisory MCP integration | "Rulence ships an advisory n8n MCP integration; whether the workflow consults Rulence is up to the workflow author." |
 | MCP-only clients | n (only what the client passes in) | n | n | n | advisory | n | n | n | advisory unless host enforces | "Rulence exposes an MCP stdio server; enforcement requires the host to consult Rulence before each tool call." |
@@ -64,6 +64,17 @@ implemented; see notes.
   and a ``safe_for_model_context`` advisory into the audit record.
   Rulence cannot replace or block the tool result the model has
   already received.
+- On Stop, ``rulence.review.FinalResponseReviewer`` reads audit
+  records for the current ``corr_id`` and applies deterministic
+  checks: secret leakage in the assistant's last turn,
+  ``forbids/requires`` constraints parsed from the user prompt,
+  action claims without a corresponding tool trace
+  (``ran tests``, ``deployed``, ``edited file``, ``searched memory``),
+  and unresolved ``ask`` decisions. On ``fail`` and only when
+  ``stop_hook_active`` is False, the dispatcher returns
+  ``decision: block`` once to request a revision; subsequent
+  re-stops audit only. Rulence does not guarantee correct answers
+  and does not prevent all hallucinations.
 
 ## How to use this matrix
 

@@ -1051,8 +1051,108 @@ def _claude_code_posttooluse(payload: dict) -> dict:
 
 
 def _claude_code_stop(payload: dict) -> dict:
-    _record_audit(payload, "Stop")
+    """Run final-response review at Claude Code Stop time.
+
+    Reads audit records for the current ``corr_id``, parses any
+    requires/forbids constraints from the transcript, and runs the
+    deterministic :class:`FinalResponseReviewer`. Honors
+    ``stop_hook_active`` to prevent infinite continuation loops.
+    """
+    from .audit import AuditTraceStore, CorrelationIdManager
+    from .logic import parse_constraints
+    from .review import FinalResponseReviewer
+    from .transcript import parse_transcript_text
+
+    stop_hook_active = bool(payload.get("stop_hook_active"))
+    claude_session = payload.get("session_id") or payload.get("sessionId")
+
+    transcript_text = _claude_hook_transcript(payload) or ""
+    final_response = _final_response_from_payload(payload, transcript_text)
+
+    manager = CorrelationIdManager()
+    ctx = manager.current(claude_session)
+    audit_records: list[dict] = []
+    if ctx.corr_id:
+        try:
+            audit_records = AuditTraceStore().read_turn(ctx.rulence_session_id, ctx.corr_id)
+        except Exception:
+            audit_records = []
+        # Drop prior final_review records so a re-stop does not
+        # double-count its own metadata.
+        audit_records = [
+            r for r in audit_records if r.get("event_type") != "Stop"
+        ]
+
+    # Parse constraints from user-content text only. The raw transcript
+    # is JSONL; ``parse_constraints`` matches ``forbids:`` / ``requires:``
+    # patterns line-by-line and would not match through JSON wrapping.
+    user_text = ""
+    if transcript_text:
+        try:
+            turns = parse_transcript_text(transcript_text)
+            user_text = "\n".join(t.content for t in turns if t.role == "user")
+        except Exception:
+            user_text = ""
+    constraints = list(parse_constraints(user_text))
+
+    review = FinalResponseReviewer().review(
+        final_response=final_response,
+        audit_records=audit_records,
+        constraints=tuple(constraints),
+        transcript=transcript_text,
+    )
+
+    metadata = {
+        "review_status": review.status,
+        "suggested_action": review.suggested_action,
+        "violated_constraints": list(review.violated_constraints),
+        "missing_required_actions": list(review.missing_required_actions),
+        "trace_mismatches": list(review.trace_mismatches),
+        "secret_finding_count": len(review.secret_findings),
+        "audit_records_inspected": len(audit_records),
+        "stop_hook_active": stop_hook_active,
+    }
+
+    _record_audit(
+        payload,
+        "Stop",
+        decision=review.status,
+        evidence=review.evidence,
+        metadata=metadata,
+    )
+
+    # Conservative continuation: only request a revision when the review
+    # failed and Claude Code is not already inside a continuation. This
+    # is the documented loop-prevention contract for the Stop hook.
+    if review.status == "fail" and not stop_hook_active:
+        return {
+            "decision": "block",
+            "reason": _hook_reason(
+                "Rulence final-response review failed", review.evidence
+            ),
+        }
+
     return {"suppressOutput": True}
+
+
+def _final_response_from_payload(payload: dict, transcript_text: str) -> str:
+    """Best-effort extraction of the assistant's final message."""
+    direct = (
+        payload.get("final_response")
+        or payload.get("final_message")
+        or payload.get("response")
+    )
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    if not transcript_text:
+        return ""
+    from .transcript import parse_transcript_text
+
+    turns = parse_transcript_text(transcript_text)
+    for turn in reversed(turns):
+        if turn.role == "assistant" and turn.content.strip():
+            return turn.content
+    return ""
 
 
 def _claude_code_sessionend(payload: dict) -> dict:
