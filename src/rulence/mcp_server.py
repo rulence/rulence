@@ -133,6 +133,12 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         payload = {"wings": mempalace_wings()}
     elif name == "rulence_memory_rooms":
         payload = {"rooms": mempalace_rooms(_required_text(arguments, "wing"))}
+    elif name == "rulence_context_snapshot":
+        payload = _context_snapshot_tool(arguments)
+    elif name == "rulence_context_handoff":
+        payload = _context_handoff_tool(arguments)
+    elif name == "rulence_context_assemble":
+        payload = _context_assemble_tool(arguments)
     elif name == "sequentialthinking":
         return _sequentialthinking(arguments)
     else:
@@ -308,7 +314,139 @@ def _tools() -> list[dict[str, Any]]:
                 "required": ["wing"],
             },
         },
+        {
+            "name": "rulence_context_snapshot",
+            "description": (
+                "Assemble and persist a governed ContextSnapshot for a task. "
+                "Reuses existing TaskState and ContextStore. Does not replace "
+                "Honcho or MemPalace."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "max_tokens": {"type": "integer", "minimum": 1, "default": 4000},
+                    "compress": {"type": "boolean", "default": True},
+                },
+                "required": ["task_id"],
+            },
+        },
+        {
+            "name": "rulence_context_handoff",
+            "description": (
+                "Record a snapshot-based handoff from one supported agent to "
+                "another. Honcho and MemPalace remain the canonical memory "
+                "backends; this records the local governance event only."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "from_agent": {"type": "string"},
+                    "to_agent": {"type": "string"},
+                    "snapshot_id": {"type": "string"},
+                    "note": {"type": "string"},
+                },
+                "required": ["task_id", "from_agent", "to_agent"],
+            },
+        },
+        {
+            "name": "rulence_context_assemble",
+            "description": (
+                "Assemble (and optionally compress) the governed context for a "
+                "task, returning the snapshot, budget, and compressed text."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "runner": {"type": "string"},
+                    "max_tokens": {"type": "integer", "minimum": 1, "default": 4000},
+                    "compress": {"type": "boolean", "default": True},
+                },
+                "required": ["task_id"],
+            },
+        },
     ]
+
+
+def _context_bus():
+    from .context import AgentContextBus, ContextStore
+
+    return AgentContextBus(store=ContextStore())
+
+
+def _context_snapshot_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    from .context import TaskNotFoundError
+
+    task_id = _required_text(arguments, "task_id")
+    max_tokens = _optional_int(arguments, "max_tokens") or 4000
+    compress = _coerce_bool(arguments.get("compress", True))
+    bus = _context_bus()
+    try:
+        snapshot = bus.create_snapshot(
+            task_id, max_tokens=max_tokens, compress=compress
+        )
+    except TaskNotFoundError as exc:
+        raise InvalidParamsError(str(exc)) from exc
+    return snapshot.to_dict()
+
+
+def _context_handoff_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    from .context import TaskNotFoundError
+
+    task_id = _required_text(arguments, "task_id")
+    from_agent = _required_text(arguments, "from_agent")
+    to_agent = _required_text(arguments, "to_agent")
+    snapshot_id = arguments.get("snapshot_id") or None
+    note = arguments.get("note") or None
+    bus = _context_bus()
+    try:
+        return bus.handoff(
+            from_agent=from_agent,
+            to_agent=to_agent,
+            task_id=task_id,
+            snapshot_id=snapshot_id,
+            note=note,
+        )
+    except TaskNotFoundError as exc:
+        raise InvalidParamsError(str(exc)) from exc
+    except ValueError as exc:
+        raise InvalidParamsError(str(exc)) from exc
+
+
+def _context_assemble_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    from .context import TaskNotFoundError
+
+    task_id = _required_text(arguments, "task_id")
+    max_tokens = _optional_int(arguments, "max_tokens") or 4000
+    compress = _coerce_bool(arguments.get("compress", True))
+    runner = arguments.get("runner") or None
+    bus = _context_bus()
+    try:
+        state = bus.load_state(task_id)
+    except TaskNotFoundError as exc:
+        raise InvalidParamsError(str(exc)) from exc
+    result = bus.assembler.assemble(
+        state.user_goal,
+        corr_id=task_id,
+        max_tokens=max_tokens,
+        policy_tier=int(state.metadata.get("policy_tier", 1) or 1),
+        current_constraints=state.active_constraints,
+        compress=compress,
+        task_id=task_id,
+    )
+    bus.publish(
+        task_id,
+        event_type="context_assembled",
+        agent=runner,
+        data={
+            "snapshot_id": result.snapshot.snapshot_id,
+            "fragment_count": len(result.snapshot.fragment_ids),
+            "runner": runner,
+        },
+    )
+    return result.to_dict()
 
 
 def _sequentialthinking(arguments: dict[str, Any]) -> dict[str, Any]:

@@ -765,6 +765,41 @@ claims:
       - "production token savings benchmark"
     notes: "Token reduction is demonstrated on local deterministic fixtures (repeated logs, verbose tool output). It is not a production billing benchmark and not a guarantee. Compression validation is enforced: constraints, decisions, open questions, blockers, memory provenance, and source IDs must survive."
 
+  - claim_id: shared_agent_context
+    claim_text: "Rulence shares local task context across supported agents through governed snapshots."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/task_state.py: TaskState, Decision, Blocker"
+      - "src/rulence/context/bus.py: AgentContextBus (file-based) with publish/load_state/update_state/create_snapshot/handoff"
+      - "src/rulence/context/conflicts.py: deterministic conflict detection (completion vs open blocker, tool-choice conflict, memory vs decision, final vs constraint, internal vs external memory)"
+      - "src/rulence/cli.py: rulence context init/show/list/snapshot/handoff/assemble/conflicts subcommands"
+      - "src/rulence/mcp_server.py: rulence_context_snapshot, rulence_context_handoff, rulence_context_assemble MCP tools"
+    required_components:
+      - context_task_state
+      - context_bus
+      - context_conflict_detector
+      - context_assembler
+      - context_snapshot
+    acceptance_tests:
+      - tests.test_task_state
+      - tests.test_agent_context_bus
+      - tests.test_context_handoff
+      - tests.test_context_conflicts
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence shares local task context across supported agents through governed snapshots"
+      - "snapshot-based agent handoff"
+      - "local task state with deterministic conflict detection"
+    blocked_phrases:
+      - "Rulence coordinates all agents"
+      - "guarantees global consistency"
+      - "distributed agent bus"
+      - "enterprise sync"
+      - "Rulence replaces Honcho"
+      - "Rulence replaces MemPalace"
+    notes: "M11 ships local-file task state at ~/.rulence/tasks/<task_id>/state.json plus an events.jsonl, snapshot-based handoff that references existing ContextStore snapshots, deterministic conflict detection (open blocker vs completion claim, npm/bun-style tool choice, memory negation against decisions, final response vs active forbids, Honcho/MemPalace disagreement), and matching CLI + MCP surfaces. There is no distributed server, no enterprise sync, no vector DB, and no universal runtime adapter. Honcho stays the canonical internal memory backend; MemPalace stays the canonical external memory backend."
+
   - claim_id: prevents_context_drift
     claim_text: "Rulence prevents context drift in agent conversations."
     category: context

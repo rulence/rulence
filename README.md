@@ -607,6 +607,41 @@ about what's enforced and what isn't:
 - It is **not a substitute for the agent runner's own permissions**. Treat
   Rulence as one layer in defense-in-depth, not the layer.
 
+## Shared task context across supported agents
+
+Rulence keeps a small local task-state record per task so a second agent
+can pick up where the first one left off without rebuilding context from
+scratch. Honcho remains the canonical internal memory backend; MemPalace
+remains the canonical external memory backend — the local task state is
+a governance receipt, not a memory replacement.
+
+```bash
+# Create a task with a goal.
+rulence context init --task task_1 --goal "ship audit logging" --json
+
+# Assemble a snapshot from the configured ContextStore (M9 + M10).
+rulence context snapshot --task task_1 --json
+
+# Hand the task off to another supported agent. The handoff event
+# references the snapshot; the receiving agent can load the same state.
+rulence context handoff --task task_1 \
+  --from claude-code --to cursor --json
+
+# Inspect the assembled context for a specific runner. Compression is
+# deterministic and constraint-preserving.
+rulence context assemble --task task_1 --runner cursor --json
+
+# Run deterministic conflict detection against the task.
+rulence context conflicts --task task_1 \
+  --final-response "all set, ready to ship" --json
+```
+
+The same operations are exposed as MCP tools `rulence_context_snapshot`,
+`rulence_context_handoff`, and `rulence_context_assemble` so an MCP
+client can drive the handoff without going through the CLI. Local files
+live under `~/.rulence/tasks/<task_id>/`. There is no distributed
+server, no team-wide replication, and no universal runtime adapter.
+
 ## Honest limitations
 
 This is not full formal verification yet. The MVP has a small explicit

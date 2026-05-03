@@ -222,6 +222,87 @@ def _main(argv: list[str] | None = None) -> int:
     claims_list.add_argument("--root", help="Repository root. Defaults to the package root.")
     claims_list.add_argument("--json", action="store_true", help="Print JSON output.")
 
+    context_parser = subparsers.add_parser(
+        "context",
+        help="Manage shared task context, snapshots, and handoffs across supported agents.",
+    )
+    context_subparsers = context_parser.add_subparsers(dest="context_command", required=True)
+
+    context_init = context_subparsers.add_parser(
+        "init", help="Create a new task state."
+    )
+    context_init.add_argument("--task", help="Task id. Defaults to a generated id.")
+    context_init.add_argument("--goal", required=True, help="User goal text.")
+    context_init.add_argument(
+        "--policy-tier",
+        type=int,
+        default=1,
+        help="Policy tier hint stored in task metadata.",
+    )
+    context_init.add_argument("--json", action="store_true")
+
+    context_show = context_subparsers.add_parser(
+        "show", help="Print the current task state JSON."
+    )
+    context_show.add_argument("--task", required=True)
+    context_show.add_argument("--json", action="store_true")
+
+    context_list = context_subparsers.add_parser(
+        "list", help="List task ids that have local state."
+    )
+    context_list.add_argument("--json", action="store_true")
+
+    context_snapshot = context_subparsers.add_parser(
+        "snapshot",
+        help="Assemble and persist a context snapshot for a task.",
+    )
+    context_snapshot.add_argument("--task", required=True)
+    context_snapshot.add_argument(
+        "--max-tokens", type=int, default=4000, help="Token budget for assembly."
+    )
+    context_snapshot.add_argument(
+        "--no-compress", action="store_true", help="Skip deterministic compression."
+    )
+    context_snapshot.add_argument("--json", action="store_true")
+
+    context_handoff = context_subparsers.add_parser(
+        "handoff",
+        help="Hand a task off from one supported agent to another.",
+    )
+    context_handoff.add_argument("--task", required=True)
+    context_handoff.add_argument("--from", dest="from_agent", required=True)
+    context_handoff.add_argument("--to", dest="to_agent", required=True)
+    context_handoff.add_argument("--snapshot")
+    context_handoff.add_argument("--note")
+    context_handoff.add_argument("--json", action="store_true")
+
+    context_assemble = context_subparsers.add_parser(
+        "assemble",
+        help="Assemble (and optionally compress) the governed context for a task.",
+    )
+    context_assemble.add_argument("--task", required=True)
+    context_assemble.add_argument(
+        "--runner",
+        help="Hint for the target runner (e.g. claude-code, cursor). Recorded only.",
+    )
+    context_assemble.add_argument(
+        "--max-tokens", type=int, default=4000, help="Token budget for assembly."
+    )
+    context_assemble.add_argument(
+        "--no-compress", action="store_true", help="Skip deterministic compression."
+    )
+    context_assemble.add_argument("--json", action="store_true")
+
+    context_conflicts = context_subparsers.add_parser(
+        "conflicts", help="Run deterministic conflict detection over a task."
+    )
+    context_conflicts.add_argument("--task", required=True)
+    context_conflicts.add_argument(
+        "--final-response",
+        help="Optional final response text to compare against active constraints.",
+    )
+    context_conflicts.add_argument("--json", action="store_true")
+
     hook_parser = subparsers.add_parser("hook", help=argparse.SUPPRESS)
     hook_subparsers = hook_parser.add_subparsers(dest="hook_target", required=True)
     hook_subparsers.add_parser("claude-code-pretooluse", help=argparse.SUPPRESS)
@@ -625,6 +706,9 @@ def _main(argv: list[str] | None = None) -> int:
                     print(f"{row['claim_id']:40s} {row['status']:13s} {public:8s} {row['claim_text']}")
             return 0
 
+    if args.command == "context":
+        return _context_command(args)
+
     if args.command == "hook":
         if args.hook_target == "claude-code-pretooluse":
             print(json.dumps(_claude_code_pretooluse(sys.stdin.read()), sort_keys=True))
@@ -640,6 +724,114 @@ def _main(argv: list[str] | None = None) -> int:
         return mcp_main()
 
     return 1
+
+
+def _context_command(args) -> int:
+    from .context import (
+        AgentContextBus,
+        ContextStore,
+        TaskNotFoundError,
+        TaskState,
+    )
+
+    bus = AgentContextBus(store=ContextStore())
+
+    if args.context_command == "init":
+        state = TaskState.new(
+            user_goal=args.goal,
+            task_id=args.task,
+            metadata={"policy_tier": int(args.policy_tier)},
+        )
+        bus.save_state(state)
+        _print(state.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "show":
+        try:
+            state = bus.load_state(args.task)
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(state.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "list":
+        ids = bus.list_tasks()
+        if getattr(args, "json", False):
+            print(json.dumps(ids, indent=2))
+        else:
+            for task_id in ids:
+                print(task_id)
+        return 0
+
+    if args.context_command == "snapshot":
+        try:
+            snapshot = bus.create_snapshot(
+                args.task,
+                max_tokens=args.max_tokens,
+                compress=not args.no_compress,
+            )
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(snapshot.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "handoff":
+        try:
+            record = bus.handoff(
+                from_agent=args.from_agent,
+                to_agent=args.to_agent,
+                task_id=args.task,
+                snapshot_id=args.snapshot,
+                note=args.note,
+            )
+        except (TaskNotFoundError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(record, getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "assemble":
+        try:
+            state = bus.load_state(args.task)
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        result = bus.assembler.assemble(
+            state.user_goal,
+            corr_id=args.task,
+            max_tokens=args.max_tokens,
+            policy_tier=int(state.metadata.get("policy_tier", 1) or 1),
+            current_constraints=state.active_constraints,
+            compress=not args.no_compress,
+            task_id=args.task,
+        )
+        bus.publish(
+            args.task,
+            event_type="context_assembled",
+            agent=args.runner,
+            data={
+                "snapshot_id": result.snapshot.snapshot_id,
+                "fragment_count": len(result.snapshot.fragment_ids),
+                "runner": args.runner,
+            },
+        )
+        _print(result.to_dict(), getattr(args, "json", False))
+        return 0
+
+    if args.context_command == "conflicts":
+        try:
+            report = bus.detect_conflicts(
+                args.task, final_response=args.final_response
+            )
+        except TaskNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(report.to_dict(), getattr(args, "json", False))
+        return 0 if not report.has_conflicts else 1
+
+    return 2
 
 
 def _load_or_start_session(

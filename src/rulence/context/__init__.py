@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from .assembler import AssemblyResult, ContextAssembler
 from .budgeter import ContextBudgetResult, ContextBudgeter, is_required_by_default
+from .bus import AgentContextBus, TaskNotFoundError, default_tasks_dir
 from .compressor import CompressedContext, ContextCompressor
+from .conflicts import Conflict, ConflictReport, detect_conflicts
 from .extract import (
     fragments_from_audit_event,
     fragments_from_final_response,
@@ -41,11 +43,22 @@ from .relevance import (
 )
 from .snapshot import ContextSnapshot, snapshot_content_hash
 from .store import ContextStore, default_context_dir
+from .task_state import (
+    TASK_STATE_VERSION,
+    Blocker,
+    Decision,
+    TaskState,
+    new_task_id,
+)
 
 __all__ = [
+    "AgentContextBus",
     "AssemblyResult",
     "BACKEND_ROLE_WEIGHTS",
+    "Blocker",
     "CompressedContext",
+    "Conflict",
+    "ConflictReport",
     "ContextAssembler",
     "ContextBudgetResult",
     "ContextBudgeter",
@@ -53,13 +66,19 @@ __all__ = [
     "ContextFragment",
     "ContextSnapshot",
     "ContextStore",
+    "Decision",
     "KIND_WEIGHTS",
     "KNOWN_FRAGMENT_KINDS",
     "RelevanceContext",
     "RelevanceScore",
     "RelevanceScorer",
     "SourceRef",
+    "TASK_STATE_VERSION",
+    "TaskNotFoundError",
+    "TaskState",
     "default_context_dir",
+    "default_tasks_dir",
+    "detect_conflicts",
     "fragments_from_audit_event",
     "fragments_from_final_response",
     "fragments_from_honcho_memory_item",
@@ -70,5 +89,6 @@ __all__ = [
     "hash_text",
     "is_required_by_default",
     "new_fragment_id",
+    "new_task_id",
     "snapshot_content_hash",
 ]
