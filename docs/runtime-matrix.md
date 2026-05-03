@@ -27,17 +27,31 @@ implemented; see notes.
   task text. With Claude Code's PreToolUse hook, Rulence sees the tool
   call payload and (when present) the transcript path; the original user
   prompt is reachable indirectly through the transcript.
-- "Tool result visibility" is `n` everywhere today: Rulence runs at
-  PreToolUse, not PostToolUse.
+- "Tool result visibility" is `partial` on Claude Code: Rulence observes
+  the PostToolUse payload, runs the secret redactor, classifies the
+  result `safe`/`warn`/`unsafe`, and writes the verdict into the audit
+  record. It cannot replace the tool result before the model receives
+  it — Claude Code's PostToolUse hook can append context but not rewrite
+  the result the model already saw. Treat the
+  ``safe_for_model_context`` field as advisory. Other runtimes are still
+  `n`.
 - "Can modify tool calls" is `n` everywhere: even Claude Code's hook can
   only deny or ask, not rewrite arguments.
-- Memory policy enforcement is `partial` only for the read-merge and
-  provider-priority feature in `retrieve_combined`. There is no
-  policy-enforced read or write arbitration yet, no redaction, and no
-  audit of memory operations.
-- Token policy enforcement is `n` everywhere: there are no measured
-  benchmarks, and Rulence does not throttle, cache, or rewrite based on
-  token budget at runtime.
+- Memory policy enforcement is `partial` on Honcho and MemPalace:
+  ``rulence.memory.MemoryArbiter`` routes reads through the configured
+  scope, runs the secret redactor on every write candidate, attaches a
+  ``MemoryProvenance`` record on success, and audits both reads and
+  refused writes. Durable writes are still refused unless the backend
+  adapter declares ``supports_write=True``; the bundled
+  ``HonchoMemoryProvider`` and ``MempalaceMcpProvider`` currently
+  expose ``supports_write=False``.
+- Token policy enforcement is observation-only: ``TokenAccountant``
+  records per-event ``input_estimate``/``output_estimate`` plus a
+  top-level ``token_estimate`` and rolls them up via
+  ``rulence audit list``/``show``/``tokens``/``report``. Estimates use
+  ``rulence.token_budget.estimate_tokens`` (tiktoken when installed,
+  fallback heuristic otherwise) and are not provider-billed. Budgets
+  warn only; deny is not enforced.
 - Secret redaction is applied at the storage boundary for audit
   events, session traces, trace HTML, and feedback records. Coverage
   is best-effort and limited to the detector list in
