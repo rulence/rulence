@@ -175,6 +175,60 @@ class TranscriptStalenessCheckTests(unittest.TestCase):
         self.assertEqual(result.status, "pass")
 
 
+class TranscriptCliTests(unittest.TestCase):
+    def _policy_dir(self, base: str, tier: int, check: str) -> str:
+        path = Path(base) / f"tier-{tier}-tx.toml"
+        path.write_text(
+            f'tier = {tier}\nlabel = "tx"\n'
+            f'required_checks = ["{check}"]\nwarn_if = []\nblock_if = []\n',
+            encoding="utf-8",
+        )
+        return base
+
+    def test_cli_preflight_with_transcript_path_blocks_when_forbid_matches(self) -> None:
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from rulence.cli import main
+
+        task = "deploy the app on friday this week, please"
+        from rulence.classifier import classify_task
+        tier = classify_task(task).tier
+
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = self._policy_dir(directory, tier, CHECK_TRANSCRIPT_CONTRADICTION)
+            transcript = Path(directory) / "transcript.jsonl"
+            transcript.write_text(
+                json.dumps({"role": "user", "content": "don't deploy on friday"}) + "\n",
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    ["preflight", task, "--policy-dir", policy_dir, "--transcript", str(transcript), "--json"]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["verdict"], "block")
+
+    def test_cli_preflight_rejects_both_transcript_flags(self) -> None:
+        from io import StringIO
+        from contextlib import redirect_stderr
+        from rulence.cli import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "transcript.jsonl"
+            transcript.write_text("{}", encoding="utf-8")
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                code = main(
+                    ["preflight", "x", "--transcript", str(transcript), "--transcript-stdin"]
+                )
+
+        self.assertEqual(code, 2)
+        self.assertIn("mutually exclusive", stderr.getvalue())
+
+
 class PreflightTranscriptIntegrationTests(unittest.TestCase):
     def _policy_dir(self, base: str, required_check: str, tier: int) -> str:
         path = Path(base) / f"tier-{tier}-transcript.toml"

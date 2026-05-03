@@ -74,6 +74,8 @@ def _main(argv: list[str] | None = None) -> int:
     preflight_parser.add_argument("--memory-path", help="Path for local file/directory memory provider.")
     preflight_parser.add_argument("--memory-url", help="Base URL for Honcho/MemPalace compatible memory provider.")
     preflight_parser.add_argument("--memory-limit", type=int, default=5, help="Maximum memory chunks to retrieve.")
+    preflight_parser.add_argument("--transcript", help="Path to a conversation transcript (JSONL or plain text) for transcript-aware checks.")
+    preflight_parser.add_argument("--transcript-stdin", action="store_true", help="Read the conversation transcript from stdin.")
     preflight_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
     start_parser = subparsers.add_parser("start", help="Start a governed reasoning session.")
@@ -88,6 +90,8 @@ def _main(argv: list[str] | None = None) -> int:
     start_parser.add_argument("--memory-path", help="Path for local file/directory memory provider.")
     start_parser.add_argument("--memory-url", help="Base URL for Honcho/MemPalace compatible memory provider.")
     start_parser.add_argument("--memory-limit", type=int, default=5, help="Maximum memory chunks to retrieve.")
+    start_parser.add_argument("--transcript", help="Path to a conversation transcript (JSONL or plain text).")
+    start_parser.add_argument("--transcript-stdin", action="store_true", help="Read the conversation transcript from stdin.")
     start_parser.add_argument("--session-id", help="Save a persistent session under ~/.rulence/sessions.")
     start_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
@@ -113,6 +117,8 @@ def _main(argv: list[str] | None = None) -> int:
     think_parser.add_argument("--branch-from", type=int, help="Branch from a previous thought number.")
     think_parser.add_argument("--branch-id", help="Identifier for a reasoning branch.")
     think_parser.add_argument("--needs-more-thoughts", action="store_true", help="Mark the estimate as too low.")
+    think_parser.add_argument("--transcript", help="Path to a conversation transcript (JSONL or plain text).")
+    think_parser.add_argument("--transcript-stdin", action="store_true", help="Read the conversation transcript from stdin.")
     think_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
     sequential_parser = subparsers.add_parser("sequentialthinking", help="Run the Sequential Thinking compatible tool.")
@@ -219,7 +225,8 @@ def _main(argv: list[str] | None = None) -> int:
             args.memory_limit,
             args.memory_transport,
         )
-        result = preflight_task(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model)
+        transcript = _resolve_transcript(args)
+        result = preflight_task(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model, transcript=transcript)
         _print(result.to_dict(), args.json)
         return 0 if result.verdict != "block" else 2
 
@@ -237,7 +244,8 @@ def _main(argv: list[str] | None = None) -> int:
             args.memory_limit,
             args.memory_transport,
         )
-        session = start_session(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model, session_id=args.session_id)
+        transcript = _resolve_transcript(args)
+        session = start_session(args.task, memory=memory, policy_dir=args.policy_dir, model=args.model, session_id=args.session_id, transcript=transcript)
         if args.session_id:
             SessionStore().save(session)
         _print_reasoning(session.to_dict(), args.json)
@@ -257,7 +265,8 @@ def _main(argv: list[str] | None = None) -> int:
             args.memory_limit,
             args.memory_transport,
         )
-        session = _load_or_start_session(args.task, args.session_file, args.session_id, memory, args.policy_dir, args.model)
+        transcript = _resolve_transcript(args)
+        session = _load_or_start_session(args.task, args.session_file, args.session_id, memory, args.policy_dir, args.model, transcript=transcript)
         session = add_thought(
             session,
             args.thought,
@@ -520,6 +529,7 @@ def _load_or_start_session(
     memory: str,
     policy_dir: str | None,
     model: str | None,
+    transcript: str | None = None,
 ) -> ReasoningSession:
     if session_file:
         path = Path(session_file).expanduser()
@@ -529,8 +539,8 @@ def _load_or_start_session(
         store = SessionStore()
         if store.exists(session_id):
             return store.load(session_id)
-        return start_session(task, memory=memory, policy_dir=policy_dir, model=model, session_id=session_id)
-    return start_session(task, memory=memory, policy_dir=policy_dir, model=model)
+        return start_session(task, memory=memory, policy_dir=policy_dir, model=model, session_id=session_id, transcript=transcript)
+    return start_session(task, memory=memory, policy_dir=policy_dir, model=model, transcript=transcript)
 
 
 def _merge_memory(
@@ -559,6 +569,25 @@ def _merge_memory(
             print(f"warn: memory provider '{provider}' unreachable: {exc}", file=sys.stderr)
     retrieved = memory_items_to_context(items)
     return "\n\n".join(part for part in (memory, retrieved) if part.strip())
+
+
+def _resolve_transcript(args: argparse.Namespace) -> str | None:
+    if getattr(args, "transcript", None) and getattr(args, "transcript_stdin", False):
+        raise ValueError("--transcript and --transcript-stdin are mutually exclusive")
+    if getattr(args, "transcript", None):
+        from .transcript import MAX_TRANSCRIPT_BYTES
+        path = Path(args.transcript).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"transcript file not found: {path}")
+        size = path.stat().st_size
+        if size > MAX_TRANSCRIPT_BYTES:
+            raise ValueError(
+                f"transcript {path} is {size} bytes, exceeds MAX_TRANSCRIPT_BYTES ({MAX_TRANSCRIPT_BYTES})"
+            )
+        return path.read_text(encoding="utf-8", errors="replace")
+    if getattr(args, "transcript_stdin", False):
+        return sys.stdin.read()
+    return None
 
 
 def _read_prompt_source(source: str) -> str:
