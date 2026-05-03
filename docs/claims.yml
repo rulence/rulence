@@ -418,6 +418,32 @@ claims:
       - "redacts memory"
     notes: "Read-only memory redaction at the memory boundary is roadmap. The general-purpose redactor in rulence.security only runs at audit/session/trace/feedback boundaries today."
 
+  - claim_id: tool_risk_classification
+    claim_text: "Deterministic local risk classification of observed tool calls (no model dependency)."
+    category: governance
+    status: supported
+    current_evidence:
+      - "src/rulence/tool_risk.py: ToolRiskClassifier and parse_mcp_tool_name"
+      - "src/rulence/governance.py: GovernanceDecision"
+      - "src/rulence/cli.py: _claude_code_pretooluse_dispatch fast path"
+    required_components:
+      - tool_risk_classifier
+      - governance_decision
+    acceptance_tests:
+      - tests.test_tool_risk
+      - tests.test_governance_decision
+      - tests.test_tool_risk_latency
+      - tests.test_mcp_tool_name_parsing
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence classifies observed tool-call risk using deterministic local rules"
+      - "deterministic local tool-risk classification"
+      - "fast-path classifier"
+    blocked_phrases:
+      - "Rulence governs every tool call"
+      - "governs every tool call"
+    notes: "Classification covers Bash/Read/Write/Edit/Glob/Grep/WebFetch/MCP. Universal '*' matchers are not installed. The fast path skips full preflight only for low-risk classifications; medium/high/critical fall through to existing preflight."
+
   - claim_id: secret_redaction_at_storage
     claim_text: "Best-effort redaction of common secret formats before audit, session, trace, and feedback storage."
     category: audit

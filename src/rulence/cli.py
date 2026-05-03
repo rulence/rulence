@@ -860,16 +860,43 @@ def _record_audit(
 
 
 def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
-    task = _claude_tool_task(payload)
-    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+    from .tool_risk import ToolRiskClassifier
 
+    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+
+    classification = ToolRiskClassifier().classify(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        runner="claude_code",
+    )
+
+    fast_path_metadata = {
+        "fast_path": not classification.should_run_full_preflight,
+        "risk_level": classification.risk_level,
+        "risk_reasons": list(classification.risk_reasons),
+    }
+
+    # Fast path: no policy load, no preflight, no memory call. Audit and allow.
+    if not classification.should_run_full_preflight:
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="approve",
+            tool_name=tool_name,
+            metadata=fast_path_metadata,
+        )
+        return {"suppressOutput": True}
+
+    # Full path: preserve existing PreToolUse behavior.
+    task = _claude_tool_task(payload)
     if not task.strip():
         _record_audit(
             payload,
             "PreToolUse",
             decision="approve",
             tool_name=tool_name,
-            metadata={"reason": "no_task"},
+            metadata={**fast_path_metadata, "reason": "no_task"},
         )
         return {"suppressOutput": True}
 
@@ -889,6 +916,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             evidence=tuple(result.blocks),
             tool_name=tool_name,
             policy_name=policy_ref,
+            metadata=fast_path_metadata,
         )
         return {
             "hookSpecificOutput": {
@@ -906,6 +934,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
             evidence=tuple(evidence),
             tool_name=tool_name,
             policy_name=policy_ref,
+            metadata=fast_path_metadata,
         )
         return {
             "hookSpecificOutput": {
@@ -920,6 +949,7 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         decision="approve",
         tool_name=tool_name,
         policy_name=policy_ref,
+        metadata=fast_path_metadata,
     )
     return {"suppressOutput": True}
 

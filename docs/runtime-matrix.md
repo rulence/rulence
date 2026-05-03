@@ -43,6 +43,12 @@ implemented; see notes.
   is best-effort and limited to the detector list in
   ``rulence.security.redactor``; custom or low-entropy secrets may
   still pass through.
+- A deterministic ``ToolRiskClassifier`` runs before the full
+  preflight on Claude Code PreToolUse events. Low-risk classifications
+  audit and allow without loading policy files or running checks;
+  medium/high/critical fall through to the existing preflight. This
+  is internal scaffolding for future broader hook coverage and is
+  not yet a license to install universal ``*`` matchers.
 
 ## How to use this matrix
 
