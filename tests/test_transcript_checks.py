@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from rulence.checks import run_check
 from rulence.classifier import classify_task
@@ -11,6 +13,7 @@ from rulence.policies import (
     CHECK_TRANSCRIPT_STALENESS,
     DEFAULT_POLICIES,
 )
+from rulence.preflight import preflight_task
 from rulence.transcript import parse_transcript_text
 
 
@@ -170,6 +173,47 @@ class TranscriptStalenessCheckTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "pass")
+
+
+class PreflightTranscriptIntegrationTests(unittest.TestCase):
+    def _policy_dir(self, base: str, required_check: str, tier: int) -> str:
+        path = Path(base) / f"tier-{tier}-transcript.toml"
+        path.write_text(
+            f'tier = {tier}\nlabel = "transcript"\n'
+            f'required_checks = ["{required_check}"]\n'
+            "warn_if = []\nblock_if = []\n",
+            encoding="utf-8",
+        )
+        return base
+
+    def test_preflight_blocks_when_transcript_forbids_current_action(self) -> None:
+        task = "deploy the app on friday this week, please"
+        tier = classify_task(task).tier
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = self._policy_dir(directory, CHECK_TRANSCRIPT_CONTRADICTION, tier)
+            transcript = "don't deploy on friday"
+
+            result = preflight_task(task, policy_dir=policy_dir, transcript=transcript)
+
+            self.assertEqual(result.verdict, "block")
+            self.assertTrue(
+                any(
+                    check.name == CHECK_TRANSCRIPT_CONTRADICTION and check.status == "block"
+                    for check in result.checks
+                )
+            )
+
+    def test_preflight_no_transcript_lets_check_pass_silently(self) -> None:
+        task = "deploy the app on friday this week, please"
+        tier = classify_task(task).tier
+        with tempfile.TemporaryDirectory() as directory:
+            policy_dir = self._policy_dir(directory, CHECK_TRANSCRIPT_DRIFT, tier)
+
+            result = preflight_task(task, policy_dir=policy_dir)
+
+            drift_check = next(check for check in result.checks if check.name == CHECK_TRANSCRIPT_DRIFT)
+            self.assertEqual(drift_check.status, "pass")
+            self.assertIn("no transcript", drift_check.detail)
 
 
 if __name__ == "__main__":
