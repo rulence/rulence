@@ -13,6 +13,9 @@ compression, and a multi-agent bus.
 """
 from __future__ import annotations
 
+from .assembler import AssemblyResult, ContextAssembler
+from .budgeter import ContextBudgetResult, ContextBudgeter, is_required_by_default
+from .compressor import CompressedContext, ContextCompressor
 from .extract import (
     fragments_from_audit_event,
     fragments_from_final_response,
@@ -29,14 +32,32 @@ from .fragment import (
     hash_text,
     new_fragment_id,
 )
+from .relevance import (
+    BACKEND_ROLE_WEIGHTS,
+    KIND_WEIGHTS,
+    RelevanceContext,
+    RelevanceScore,
+    RelevanceScorer,
+)
 from .snapshot import ContextSnapshot, snapshot_content_hash
 from .store import ContextStore, default_context_dir
 
 __all__ = [
+    "AssemblyResult",
+    "BACKEND_ROLE_WEIGHTS",
+    "CompressedContext",
+    "ContextAssembler",
+    "ContextBudgetResult",
+    "ContextBudgeter",
+    "ContextCompressor",
     "ContextFragment",
     "ContextSnapshot",
     "ContextStore",
+    "KIND_WEIGHTS",
     "KNOWN_FRAGMENT_KINDS",
+    "RelevanceContext",
+    "RelevanceScore",
+    "RelevanceScorer",
     "SourceRef",
     "default_context_dir",
     "fragments_from_audit_event",
@@ -47,6 +68,7 @@ __all__ = [
     "fragments_from_tool_result",
     "fragments_from_user_prompt",
     "hash_text",
+    "is_required_by_default",
     "new_fragment_id",
     "snapshot_content_hash",
 ]

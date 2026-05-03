@@ -712,6 +712,59 @@ claims:
       - "cross-agent consistency"
     notes: "M9 ships fragment, store, and snapshot primitives plus deterministic extraction at audit and memory boundaries. No embeddings, no semantic search, no compression, and no multi-agent bus. Honcho is the canonical internal memory backend; MemPalace is the canonical external memory backend."
 
+  - claim_id: context_assembly
+    claim_text: "Rulence assembles and budgets context from governed traces, Honcho memory, and MemPalace memory."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/relevance.py: RelevanceScorer with deterministic signals"
+      - "src/rulence/context/budgeter.py: ContextBudgeter preserves required fragments"
+      - "src/rulence/context/compressor.py: ContextCompressor with deterministic compression and validation"
+      - "src/rulence/context/assembler.py: ContextAssembler pipeline (gather, score, dedupe, budget, compress, snapshot)"
+    required_components:
+      - context_relevance_scorer
+      - context_budgeter
+      - context_compressor
+      - context_assembler
+    acceptance_tests:
+      - tests.test_context_relevance
+      - tests.test_context_budgeter
+      - tests.test_context_compressor
+      - tests.test_context_assembler
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence assembles and budgets context from governed traces, Honcho memory, and MemPalace memory"
+      - "deterministic context assembly and budgeting"
+      - "constraint-preserving context compression"
+    blocked_phrases:
+      - "semantic context assembly"
+      - "embedding-based context"
+      - "LLM context summarizer"
+      - "guarantees perfect relevance"
+    notes: "M10 ships deterministic relevance scoring (no embeddings), greedy required-first budgeting, deterministic compression that preserves constraints/decisions/blockers/memory provenance, and a snapshot-producing assembler. No LLM summarizer, no embeddings, no semantic search, no cross-agent bus."
+
+  - claim_id: context_compression_local_benchmark
+    claim_text: "Rulence reduces context size while preserving constraints and decisions in local benchmark cases."
+    category: context
+    status: supported
+    current_evidence:
+      - "src/rulence/context/compressor.py: ContextCompressor.compress collapses repeats and truncates verbose tool output"
+      - "tests/test_context_compressor.py: BenchmarkReductionTests.test_compression_reduces_tokens_while_preserving_constraints"
+    required_components:
+      - context_compressor
+    acceptance_tests:
+      - tests.test_context_compressor
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence reduces context size while preserving constraints and decisions in local benchmark cases"
+      - "constraint-preserving local compression benchmark"
+      - "deterministic compression measured on local fixtures"
+    blocked_phrases:
+      - "guaranteed token savings"
+      - "always reduces tokens"
+      - "production token savings benchmark"
+    notes: "Token reduction is demonstrated on local deterministic fixtures (repeated logs, verbose tool output). It is not a production billing benchmark and not a guarantee. Compression validation is enforced: constraints, decisions, open questions, blockers, memory provenance, and source IDs must survive."
+
   - claim_id: prevents_context_drift
     claim_text: "Rulence prevents context drift in agent conversations."
     category: context
