@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <main>
+    <section class="hero">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Open source • Local-first policy layer</p>
+          <h1>Rulence</h1>
+          <p class="display-line">One machine. Consistency across all agents.</p>
+          <p class="slogan">{{ config.extra.slogan }}</p>
+          <p class="lede">
+            Rulence classifies task difficulty first, then applies local policy
+            files that decide when agents check memory, spend tokens, call tools,
+            escalate, or stop.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#install">pip install rulence</a>
+            <a class="button secondary" href="{{ config.extra.github_url }}">View GitHub</a>
+          </div>
+          <div class="badge-row" aria-label="Rulence package badges">
+            <a href="{{ config.extra.pypi_url }}"><img alt="PyPI version" src="https://badge.fury.io/py/rulence.svg"></a>
+            <a href="{{ config.extra.npm_url }}"><img alt="npm version" src="https://badge.fury.io/js/@rulence%2Fmcp.svg"></a>
+            <a href="{{ config.extra.license_url }}"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+            <a href="{{ config.extra.github_url }}"><img alt="GitHub stars" src="https://img.shields.io/github/stars/rulence/rulence?style=social"></a>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="Animated Rulence preflight cockpit">
+          <div class="engine-card">
+            <div class="engine-topline">
+              <span class="live-dot"></span>
+              <span>rulence preflight</span>
+              <strong>local</strong>
+            </div>
+
+            <div class="task-feed">
+              <span>incoming task</span>
+              <strong data-scenario-task>migrate the database this week</strong>
+            </div>
+
+            <div class="tier-router" aria-label="Task tier router">
+              <div class="router-line"></div>
+              <button type="button" data-tier-step="0">T0</button>
+              <button type="button" data-tier-step="1">T1</button>
+              <button type="button" data-tier-step="2">T2</button>
+              <button type="button" data-tier-step="3">T3</button>
+              <button type="button" data-tier-step="4" class="active">T4</button>
+              <button type="button" data-tier-step="5">T5</button>
+            </div>
+
+            <div class="engine-grid">
+              <div class="engine-panel primary-panel">
+                <span>classification</span>
+                <strong data-scenario-tier>Tier 4 / complex</strong>
+                <p data-scenario-policy>~/.rulence/policies/tier-4-complex.md</p>
+              </div>
+              <div class="engine-panel">
+                <span>verdict</span>
+                <strong data-scenario-verdict>warn</strong>
+                <p data-scenario-reason>release freeze conflicts with migration</p>
+              </div>
+            </div>
+
+            <div class="budget-panel">
+              <div>
+                <span>context budget</span>
+                <strong><b data-scenario-before>18.4k</b> → <b data-scenario-after>4.9k</b></strong>
+              </div>
+              <div class="budget-bars" aria-hidden="true">
+                <span class="bar before"><i></i></span>
+                <span class="bar after"><i></i></span>
+              </div>
+            </div>
+
+            <div class="check-stack" aria-label="Required Rulence checks">
+              <span data-check="memory">memory_check</span>
+              <span data-check="consistency">consistency_check</span>
+              <span data-check="budget">context_budget</span>
+              <span data-check="tool">tool_preflight</span>
+              <span data-check="counterexample">counterexample_search</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="quickstart">
+      <aside class="console" aria-label="Rulence get started command flow">
+        <div class="console-title">get started you@rulence ~ %</div>
+        <div class="console-bar">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <pre><code>pip install rulence
+rulence policy install secrets aws migrations git payments
+rulence install claude-code</code></pre>
+      </aside>
+
+      <div class="install-grid" aria-label="Rulence quickstart options">
+        <article>
+          <span>Python</span>
+          <h3>CLI and local policy engine</h3>
+          <pre><code>pip install rulence</code></pre>
+        </article>
+        <article>
+          <span>Node.js / MCP</span>
+          <h3>Run as an MCP server</h3>
+          <pre><code>npx -y @rulence/mcp</code></pre>
+        </article>
+        <article>
+          <span>Docker</span>
+          <h3>Pull the container image</h3>
+          <pre><code>docker pull ghcr.io/rulence/rulence:latest</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section id="runners" class="section">
+      <div class="section-heading">
+        <p class="eyebrow">One-line runner setup</p>
+        <h2>Put the same local policy layer in front of each agent.</h2>
+      </div>
+      <div class="metric-grid runner-grid">
+        <article>
+          <span>Claude Code</span>
+          <h3>PreToolUse gate</h3>
+          <pre><code>rulence install claude-code</code></pre>
+        </article>
+        <article>
+          <span>Cursor</span>
+          <h3>Project rule</h3>
+          <pre><code>rulence install cursor --dir .</code></pre>
+        </article>
+        <article>
+          <span>n8n</span>
+          <h3>MCP server config</h3>
+          <pre><code>rulence install n8n</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section id="demo" class="section split">
+      <div>
+        <p class="eyebrow">Demo artifacts</p>
+        <h2>Same task, same verdict, same trace.</h2>
+        <p class="section-copy">
+          Public demo artifacts live in the repository: the trace, the runnable
+          script, and the recording script for the launch video.
+        </p>
+      </div>
+      <div class="stack-list link-list" aria-label="Rulence demo links">
+        <a href="{{ config.extra.demo_trace_url }}"><span>Demo trace</span><strong>Open the generated trace.html artifact.</strong></a>
+        <a href="{{ config.extra.run_demo_url }}"><span>Run-demo script</span><strong>Inspect the local cross-agent demo script.</strong></a>
+        <a href="{{ config.extra.video_script_url }}"><span>Video script</span><strong>Read the 90-second launch video script.</strong></a>
+      </div>
+    </section>
+
+    <section class="proof-strip" aria-label="Rulence product promises">
+      <div><span>Policy-first</span><strong>Agents do not choose their own safety checks.</strong></div>
+      <div><span>Memory-first</span><strong>Ask local context before burning model context.</strong></div>
+      <div><span>Audit-first</span><strong>Every decision cites the policy that produced it.</strong></div>
+      <div><span>Local-first</span><strong>Markdown rules, local files, optional cloud.</strong></div>
+    </section>
+
+    <section id="philosophy" class="section philosophy">
+      <div class="section-heading">
+        <p class="eyebrow">The Rulence philosophy</p>
+        <h2>Your machine is the source of truth.</h2>
+      </div>
+      <div class="principles">
+        <p>Your memory belongs to you.</p>
+        <p>Agents should ask your memory before wasting tokens.</p>
+        <p>Reasoning should be inspectable, not hidden.</p>
+        <p>Rules should travel across agents.</p>
+        <p>Local first. Cloud optional. No lock-in.</p>
+      </div>
+      <p class="section-copy">
+        Rulence turns local memory and project rules into a reasoning layer
+        agents can use across tools, models, and runtimes.
+      </p>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="eyebrow">First call every agent makes</p>
+        <h2>Task triage decides how much reasoning the job deserves.</h2>
+      </div>
+      <div class="ladder" aria-label="Rulence task tiers">
+        <div data-tier-card="0"><span>Tier 0</span><strong>Direct</strong><p>No tool use. No policy overhead beyond current instruction.</p></div>
+        <div data-tier-card="1"><span>Tier 1</span><strong>Trivial</strong><p>Answer from current context or local memory.</p></div>
+        <div data-tier-card="2"><span>Tier 2</span><strong>Mild</strong><p>One lookup, one file, or one memory check.</p></div>
+        <div data-tier-card="3"><span>Tier 3</span><strong>Moderate</strong><p>Multi-step work with budget and consistency checks.</p></div>
+        <div data-tier-card="4"><span>Tier 4</span><strong>Complex</strong><p>Tool chains, code edits, migrations, research, or synthesis.</p></div>
+        <div data-tier-card="5"><span>Tier 5</span><strong>High-risk</strong><p>Credentials, destructive actions, sensitive data, or unclear intent.</p></div>
+      </div>
+    </section>
+
+    <section id="gains" class="section">
+      <div class="section-heading">
+        <p class="eyebrow">What users gain</p>
+        <h2>Cheaper agents, safer actions, more consistent decisions.</h2>
+      </div>
+      <div class="metric-grid">
+        <article>
+          <span>01</span>
+          <h3>Cheaper agents</h3>
+          <p>Budget context before execution, retrieve only relevant memory, and reduce repeated rediscovery.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h3>Safer agents</h3>
+          <p>Check contradictions, stale assumptions, risky tool chains, and high-impact actions before execution.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h3>Consistent agents</h3>
+          <p>Keep rules, preferences, constraints, and prior decisions available across agents and model providers.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div>
+        <p class="eyebrow">Policy files travel</p>
+        <h2>One local rulebook can govern Maru, Hermes, Claude, Cursor, Codex, and future agents.</h2>
+      </div>
+      <div class="console install-console" aria-label="Rulence local policy file example">
+        <div class="console-bar">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <pre><code>---
+tier: 3
+required:
+  - memory_check
+  - consistency_check
+  - context_budget
+  - tool_preflight
+block_if:
+  contradictions_found: true
+  sensitive_action: true
+---
+
+Use this tier for multi-step work
+that may call tools or rely on memory.</code></pre>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div>
+        <p class="eyebrow">Memory before tokens</p>
+        <h2>Rulence does not replace memory. It governs how agents reason over it.</h2>
+      </div>
+      <div class="stack-list" aria-label="Rulence memory architecture">
+        <div><span>Honcho</span><strong>Internal memory: user preferences, identity, behavior patterns.</strong></div>
+        <div><span>MemPalace</span><strong>External memory: project facts, notes, documents, decisions.</strong></div>
+        <div><span>Rulence</span><strong>Reasoning layer: conflicts, constraints, budgets, evidence, actions.</strong></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="eyebrow">What Rulence checks</p>
+        <h2>Rules before action. Evidence before confidence.</h2>
+      </div>
+      <div class="checks-grid">
+        <article>
+          <h3>Task Triage</h3>
+          <p>Classify difficulty, risk, ambiguity, and required checks before the agent starts.</p>
+        </article>
+        <article>
+          <h3>Policy Router</h3>
+          <p>Load the right local policy file and compose only the checks that tier requires.</p>
+        </article>
+        <article>
+          <h3>Context Budgeter</h3>
+          <p>Predict input, output, memory, tool-call, cost, and latency budget before the agent starts.</p>
+        </article>
+        <article>
+          <h3>Logic Checker</h3>
+          <p>Extract claims, premises, assumptions, conclusions, and contradictions from agent plans.</p>
+        </article>
+        <article>
+          <h3>Memory Arbiter</h3>
+          <p>Compare current instruction, Honcho, MemPalace, local files, freshness, and confidence.</p>
+        </article>
+        <article>
+          <h3>Counterexample Finder</h3>
+          <p>Look for a case where the agent plan fails before it spends tokens or calls tools.</p>
+        </article>
+        <article>
+          <h3>Constraint Solver</h3>
+          <p>Use deterministic checks first, then optional Z3 or Prolog when a claim can be formalized.</p>
+        </article>
+        <article>
+          <h3>Tool-Call Preflight</h3>
+          <p>Warn, shrink, route, or block when an action chain relies on weak reasoning.</p>
+        </article>
+        <article>
+          <h3>Audit Log</h3>
+          <p>Record policy version, tier, checks run, warnings, overrides, and final verdict.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="docs" class="section">
+      <div class="section-heading">
+        <p class="eyebrow">Canonical links</p>
+        <h2>Install packages, inspect the source, and read the docs from the registry of record.</h2>
+      </div>
+      <div class="metric-grid link-grid">
+        <article>
+          <span>GitHub</span>
+          <h3><a href="{{ config.extra.github_url }}">Source repository</a></h3>
+          <p>Code, issues, releases, examples, and demo artifacts.</p>
+        </article>
+        <article>
+          <span>PyPI</span>
+          <h3><a href="{{ config.extra.pypi_url }}">Python package</a></h3>
+          <p>Install the CLI and local governance engine with `pip install rulence`.</p>
+        </article>
+        <article>
+          <span>npm</span>
+          <h3><a href="{{ config.extra.npm_url }}">MCP launcher</a></h3>
+          <p>Run the MCP server with `npx -y @rulence/mcp`.</p>
+        </article>
+        <article>
+          <span>Docker</span>
+          <h3><a href="{{ config.extra.docker_url }}">Container image</a></h3>
+          <p>Pull `ghcr.io/rulence/rulence:latest` for containerized MCP use.</p>
+        </article>
+      </div>
+      <div class="stack-list link-list docs-list" aria-label="Rulence documentation links">
+        <a href="{{ config.extra.readme_url }}"><span>README</span><strong>Start from the repository README.</strong></a>
+        <a href="{{ config.extra.quickstart_url }}"><span>Quick start</span><strong>Install locally and run the first commands.</strong></a>
+        <a href="{{ config.extra.tier_model_url }}"><span>Tier model</span><strong>See how Rulence routes task risk and complexity.</strong></a>
+        <a href="{{ config.extra.mcp_config_url }}"><span>MCP config</span><strong>Copy the example MCP server configuration.</strong></a>
+        <a href="{{ config.extra.demo_trace_url }}"><span>Demo trace</span><strong>Open the shareable trace artifact.</strong></a>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div>
+        <p class="eyebrow">Benchmarks coming</p>
+        <h2>No fake numbers. Rulence will measure the savings it claims.</h2>
+      </div>
+      <div class="stack-list" aria-label="Planned Rulence evals">
+        <div><span>Tokens</span><strong>Estimated vs actual context reduction per task.</strong></div>
+        <div><span>Routing</span><strong>When to use memory, solver, local model, or escalation.</strong></div>
+        <div><span>Reliability</span><strong>JSON validity, contradiction detection, latency overhead.</strong></div>
+      </div>
+    </section>
+  </main>
+{% endblock content %}
