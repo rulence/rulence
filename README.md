@@ -574,6 +574,17 @@ about what's enforced and what isn't:
   `rulence audit report --session <rs_...>`. These are **estimates**,
   not provider-billed actuals — Rulence does **not** report exact
   provider billing.
+- Memory operations route through `rulence.memory.MemoryArbiter`.
+  Honcho is the canonical *internal* memory backend; MemPalace is the
+  canonical *external* memory backend. The arbiter redacts every
+  write candidate through the secret redactor, attaches a
+  `MemoryProvenance` record on success, and refuses writes to
+  backends whose adapter does not declare `supports_write=True`. Read
+  attempts at UserPromptSubmit and PreToolUse are recorded in audit
+  metadata even when no provider is configured (the result is marked
+  `degraded`). Rulence does **not** replace Honcho or MemPalace, does
+  **not** ship semantic memory, and does **not** prevent every bad
+  memory write.
 - Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
   PEM private keys, basic-auth and database URLs, `KEY=value` env-style
   assignments) before audit storage, session/trace persistence, and feedback

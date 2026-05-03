@@ -479,20 +479,38 @@ claims:
     notes: "Routing/merging only. No write arbitration, no policy enforcement on memory yet."
 
   - claim_id: memory_arbitration_policy
-    claim_text: "Policy-enforced memory arbitration across Honcho and MemPalace, including write routing and redaction (roadmap)."
+    claim_text: "Rulence arbitrates Honcho and MemPalace memory access for supported workflows."
     category: memory
-    status: aspirational
-    current_evidence: []
+    status: supported
+    current_evidence:
+      - "src/rulence/memory/schema.py: MemoryBackendRole, MemoryProviderCapabilities, MemoryProvenance, request/result models"
+      - "src/rulence/memory/router.py: MemoryRouter routes scope -> backend"
+      - "src/rulence/memory/arbiter.py: MemoryArbiter redacts, attaches provenance, audits"
+      - "src/rulence/cli.py: UserPromptSubmit and PreToolUse audit memory_read attempts"
     required_components:
       - memory_router
-      - memory_policy_engine
-      - redaction_pipeline
+      - memory_arbiter
+      - secret_redactor
       - audit_log
-    acceptance_tests: []
-    public_copy_allowed: false
-    allowed_phrasings: []
-    blocked_phrases: []
-    notes: "M0 explicitly excludes this. Track separately before any public claim."
+    acceptance_tests:
+      - tests.test_memory_backend_roles
+      - tests.test_memory_router
+      - tests.test_memory_arbiter_honcho_mempalace
+      - tests.test_memory_policy_integration
+    public_copy_allowed: true
+    allowed_phrasings:
+      - "Rulence arbitrates Honcho and MemPalace memory access for supported workflows"
+      - "Rulence routes and governs memory access across Honcho and MemPalace where configured"
+      - "Honcho is the canonical internal memory backend"
+      - "MemPalace is the canonical external memory backend"
+    blocked_phrases:
+      - "Rulence has semantic memory"
+      - "semantic memory"
+      - "Rulence governs all external memory systems"
+      - "Rulence prevents all bad memory writes"
+      - "vector search"
+      - "embedding-based memory"
+    notes: "M8 ships routing, redaction, provenance, and audit on read paths. Writes are denied for any content that would route to a credential-like scope or that the M2 redactor flags as carrying secrets. Today's HonchoMemoryProvider and MempalaceMcpProvider expose supports_write=False; the arbiter refuses writes there until a backend's adapter implements a write method."
 
   - claim_id: memory_redaction
     claim_text: "Policy-enforced redaction across memory reads and writes (roadmap)."

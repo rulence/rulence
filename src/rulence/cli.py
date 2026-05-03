@@ -960,6 +960,18 @@ def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
         "estimator_name": in_method,
     }
 
+    # When the classifier signals memory is required (high/critical
+    # severity), route the read through the arbiter so the audit
+    # trail records the attempt regardless of whether a provider is
+    # configured.
+    if classification.requires_memory_check and task_text:
+        scope = (
+            "project_context"
+            if classification.risk_level == "critical"
+            else "code_context"
+        )
+        base_metadata.update(_attempt_memory_read(task_text, scope=scope))
+
     # Fast path: no policy load, no preflight, no memory call. Audit and allow.
     if not classification.should_run_full_preflight:
         _record_audit(
@@ -1083,6 +1095,7 @@ def _claude_code_sessionstart(payload: dict) -> dict:
 
 
 def _claude_code_userpromptsubmit(payload: dict) -> dict:
+    from .classifier import classify_task
     from .token_budget import estimate_tokens
 
     prompt = str(payload.get("prompt") or payload.get("user_message") or "")
@@ -1092,8 +1105,53 @@ def _claude_code_userpromptsubmit(payload: dict) -> dict:
         "output_estimate": 0,
         "estimator_name": in_method,
     }
+
+    if prompt:
+        tier = classify_task(prompt).tier
+        metadata["task_tier"] = tier
+        # Tier 3+ work usually benefits from memory context. Route the
+        # read through the arbiter so the audit trail records which
+        # backend was queried, even when providers are absent and the
+        # call degrades.
+        if tier >= 3:
+            scope = "project_context" if tier >= 4 else "user_preferences"
+            metadata.update(_attempt_memory_read(prompt, scope=scope))
+
     _record_audit(payload, "UserPromptSubmit", metadata=metadata)
     return {"suppressOutput": True}
+
+
+def _attempt_memory_read(query: str, *, scope: str, corr_id: str | None = None,
+                         policy_name: str | None = None) -> dict:
+    """Run an audit-only memory read through the arbiter.
+
+    Returns a flat dict suitable for merging into audit metadata.
+    Failures are captured (never raised); the caller still writes an
+    audit record.
+    """
+    try:
+        from .memory import MemoryArbiter
+
+        result = MemoryArbiter().read(
+            query,
+            scope=scope,
+            policy=policy_name,
+            corr_id=corr_id,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "memory_read_attempted": False,
+            "memory_read_error": str(exc),
+        }
+    return {
+        "memory_read_attempted": True,
+        "memory_read_scope": scope,
+        "memory_read_backend": result.backend,
+        "memory_read_role": result.backend_role,
+        "memory_read_degraded": result.degraded,
+        "memory_read_item_count": len(result.items),
+        "memory_read_error": result.error,
+    }
 
 
 def _claude_code_posttooluse(payload: dict) -> dict:
