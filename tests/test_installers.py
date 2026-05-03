@@ -40,6 +40,20 @@ class InstallersTests(unittest.TestCase):
 
         self.assertEqual(second["status"], "already_installed")
 
+    def test_claude_code_raises_helpful_error_on_malformed_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Path(directory) / ".claude" / "settings.json"
+            settings.parent.mkdir(parents=True)
+            settings.write_text("not json at all", encoding="utf-8")
+            with patch("rulence.installers.Path.home", return_value=Path(directory)):
+                with self.assertRaises(ValueError) as ctx:
+                    install_claude_code()
+
+        message = str(ctx.exception)
+        self.assertIn(str(settings), message)
+        self.assertIn("not valid JSON", message)
+        self.assertIn("re-run", message)
+
     def test_cursor_writes_rule_to_project(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = install_cursor(directory)
