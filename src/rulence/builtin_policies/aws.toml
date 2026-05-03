@@ -1,0 +1,12 @@
+tier = 5
+label = "aws"
+required_checks = ["memory_check", "tool_preflight", "constraint_solver", "user_approval"]
+warn_if = ["memory_missing"]
+block_if = ["sensitive_or_destructive_action"]
+constraints = [
+  "forbids(delete-bucket, production)",
+  "forbids(drop-table, prod)",
+  "requires(iam, audit)",
+  "forbids(public-bucket, customer)",
+  "forbids(rds-delete, no-snapshot)",
+]

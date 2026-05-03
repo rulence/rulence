@@ -1,0 +1,11 @@
+tier = 4
+label = "migrations"
+required_checks = ["memory_check", "consistency_check", "tool_preflight", "counterexample_search", "constraint_solver"]
+warn_if = ["memory_missing", "counterexample_found"]
+block_if = ["destructive_with_weak_context"]
+constraints = [
+  "requires(migrate, rollback)",
+  "requires(migrate, backup)",
+  "requires(schema, dry-run)",
+  "forbids(migrate, freeze)",
+]

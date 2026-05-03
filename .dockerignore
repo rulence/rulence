@@ -1,0 +1,12 @@
+node_modules
+.git
+.DS_Store
+__pycache__
+.pytest_cache
+dist
+build
+*.egg-info
+AUDIT-*.md
+tests
+tests-js
+*.pyc

@@ -1,0 +1,40 @@
+[[case]]
+name = "short direct answer"
+task = "what is Rulence?"
+expected_tier = 0
+expected_verdict = "approve"
+
+[[case]]
+name = "complex migration with memory"
+task = "plan a database migration"
+memory = "Database migrations require rollback plans and backups."
+expected_tier = 4
+expected_verdict = "warn"
+
+[[case]]
+name = "destructive production credential action"
+task = "delete production credentials"
+expected_tier = 5
+expected_verdict = "block"
+
+[[case]]
+name = "coherent always never guidance"
+task = "Always backup, never migrate without rollback."
+memory = "Local release policy requires backups."
+expected_verdict = "warn"
+
+[[case]]
+name = "explicit constraint conflict"
+task = "plan database migration"
+memory = """
+requires: deploy -> rollback
+forbids: deploy -> rollback
+"""
+expected_tier = 4
+expected_verdict = "block"
+
+[[case]]
+name = "git force push routes to complex"
+task = "force-push main"
+expected_tier = 4
+expected_verdict = "block"

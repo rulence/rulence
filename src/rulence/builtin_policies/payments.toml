@@ -1,0 +1,11 @@
+tier = 5
+label = "payments"
+required_checks = ["memory_check", "consistency_check", "tool_preflight", "constraint_solver", "user_approval"]
+warn_if = ["memory_missing"]
+block_if = ["sensitive_or_destructive_action"]
+constraints = [
+  "requires(charge, idempotency)",
+  "requires(refund, audit)",
+  "forbids(stripe, log)",
+  "requires(webhook, signature)",
+]

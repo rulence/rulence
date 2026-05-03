@@ -1,0 +1,25 @@
+{
+  "name": "@rulence/mcp",
+  "version": "0.3.0",
+  "description": "Rulence MCP server: governed Sequential Thinking replacement for agents.",
+  "type": "module",
+  "bin": {
+    "rulence-mcp": "./src-js/mcp-server.js"
+  },
+  "scripts": {
+    "start": "node ./src-js/mcp-server.js",
+    "test": "node --test tests-js/*.test.mjs",
+    "check": "node --check ./src-js/mcp-server.js"
+  },
+  "keywords": [
+    "mcp",
+    "agents",
+    "reasoning",
+    "sequential-thinking",
+    "rulence"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "rulence": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "rulence",
+        "mcp"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/aumordecade/Desktop/Rulence MVP/src"
+      }
+    }
+  }
+}

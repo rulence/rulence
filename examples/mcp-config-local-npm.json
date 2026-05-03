@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "rulence": {
+      "command": "node",
+      "args": [
+        "/Users/aumordecade/Desktop/Rulence MVP/src-js/mcp-server.js"
+      ]
+    }
+  }
+}

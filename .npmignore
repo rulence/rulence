@@ -1,0 +1,15 @@
+tests/
+tests-js/
+.github/
+pyproject.toml
+Dockerfile
+.dockerignore
+*.pyc
+__pycache__/
+.pytest_cache/
+.DS_Store
+AUDIT-*.md
+*.egg-info/
+src/*.egg-info/
+dist/
+build/
