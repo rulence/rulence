@@ -8,8 +8,8 @@ from pathlib import Path
 from urllib import error, parse
 from urllib import request
 
-from .config import HonchoConfig, MempalaceConfig, MemoryConfig, load_memory_config
-from .mcp_client import McpClient, McpError, McpServerHandle, get_client
+from ..config import HonchoConfig, MempalaceConfig, MemoryConfig, load_memory_config
+from ..mcp_client import McpClient, McpError, McpServerHandle, get_client
 
 @dataclass(frozen=True)
 class MemoryItem:

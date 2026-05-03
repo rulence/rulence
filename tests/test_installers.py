@@ -19,7 +19,13 @@ class InstallersTests(unittest.TestCase):
         self.assertEqual(result["status"], "installed")
         self.assertIn("PreToolUse", settings["hooks"])
         self.assertTrue(any("rulence" in json.dumps(hook) for hook in settings["hooks"]["PreToolUse"]))
-        self.assertTrue(any("rulence hook claude-code-pretooluse" in json.dumps(hook) for hook in settings["hooks"]["PreToolUse"]))
+        # Post-M1 the unified `rulence hook claude-code` command is installed.
+        self.assertTrue(
+            any(
+                "rulence hook claude-code" in json.dumps(hook)
+                for hook in settings["hooks"]["PreToolUse"]
+            )
+        )
 
     def test_claude_code_backs_up_existing_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

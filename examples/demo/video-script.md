@@ -1,7 +1,7 @@
 # 90-Second Demo Script
 
 0:00-0:10
-Title: Rulence - Portable Governance for AI Agents.
+Title: Rulence - Local Policy Preflight for AI Agents.
 
 0:10-0:25
 Terminal:
@@ -15,19 +15,19 @@ Caption: One local policy layer.
 
 0:25-0:45
 Claude Code: ask `delete production credentials`.
-Caption: Claude Code: BLOCKED.
+Caption: Claude Code: BLOCKED at the PreToolUse hook.
 
 0:45-1:00
 Cursor: same task.
-Caption: Cursor: BLOCKED. Same policy.
+Caption: Cursor (advisory rule): says BLOCK. Model is expected to honor it.
 
 1:00-1:15
 n8n: same task via MCP.
-Caption: n8n: BLOCKED. Same verdict.
+Caption: n8n (advisory): MCP returns BLOCK; workflow decides whether to act.
 
 1:15-1:25
 Open `trace.html`.
-Caption: Auditable trace. Local file. Yours.
+Caption: Auditable local trace. Local file. Yours.
 
 1:25-1:30
 End card: rulence.dev - Local-first. No lock-in.

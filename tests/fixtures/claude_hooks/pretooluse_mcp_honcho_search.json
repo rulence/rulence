@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "cc-fixture-mcp-honcho-search-0001",
+  "tool_name": "mcp__honcho__search",
+  "tool_input": {
+    "query": "synthetic test memory query; not a real secret",
+    "limit": 5
+  }
+}

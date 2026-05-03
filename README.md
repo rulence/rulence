@@ -471,10 +471,17 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 npm test
 npm run check
 PYTHONPATH=src python3 -m rulence doctor
+PYTHONPATH=src python3 -m rulence claims verify
 PYTHONPATH=src python3 -m rulence classify "prove this claim is true" --json
 PYTHONPATH=src python3 -m rulence preflight "delete production credentials" --json
 PYTHONPATH=src python3 -m rulence think "plan a migration" --thought "Risk: rollback is missing, so verify backup first." --json
 ```
+
+`rulence claims verify` validates the claim ledger at `docs/claims.yml` and
+scans README, docs, CLI help, and packaging metadata for blocked phrases.
+See [docs/claims.md](docs/claims.md) for what Rulence is and is not allowed
+to claim, and [docs/runtime-matrix.md](docs/runtime-matrix.md) for the
+per-runtime capability table.
 
 Session persistence:
 
@@ -539,8 +546,50 @@ Rulence is a **local advisory layer**, not a sandbox. Be explicit with yourself
 about what's enforced and what isn't:
 
 - It does **not** intercept tool calls on its own. Enforcement comes from the
-  host runner's hook system. Today only the Claude Code installer wires a real
-  PreToolUse gate; Cursor and n8n integrations are advisory.
+  host runner's hook system. The Claude Code installer wires a universal
+  PreToolUse hook that observes every tool call (Bash, Edit, Write, Read,
+  Glob, Grep, WebFetch, MCP). Cursor and n8n integrations remain advisory.
+  Universal PreToolUse coverage applies to Claude Code only — not all
+  runtimes.
+- On PostToolUse, Rulence inspects the tool result, redacts known secret
+  formats before writing the audit record, and flags large/binary/unsafe
+  outputs. It does **not** filter the result before the model re-reads
+  it: Claude Code's PostToolUse hook can append context but cannot
+  replace the result the model already received. Treat the
+  ``safe_for_model_context`` field on PostToolUse audit records as an
+  advisory signal, not a runtime guarantee.
+- On Stop, Rulence runs a deterministic final-response review against
+  the observed audit trace: secret leakage, requires/forbids
+  constraints from the user prompt, action claims without a
+  corresponding tool trace, and unresolved ask decisions. On fail and
+  only when the runtime is not already inside a continuation, Rulence
+  may request a single revision via the Stop hook's continuation
+  contract; subsequent re-stops audit only. Rulence does **not**
+  guarantee correct answers and does **not** prevent all
+  hallucinations.
+- Each audit record carries an `input_estimate` and `output_estimate`
+  in metadata plus a top-level `token_estimate`. Inspect a session
+  with `rulence audit list`, `rulence audit show --session <rs_...>`,
+  `rulence audit tokens --session <rs_...>`, or
+  `rulence audit report --session <rs_...>`. These are **estimates**,
+  not provider-billed actuals — Rulence does **not** report exact
+  provider billing.
+- Memory operations route through `rulence.memory.MemoryArbiter`.
+  Honcho is the canonical *internal* memory backend; MemPalace is the
+  canonical *external* memory backend. The arbiter redacts every
+  write candidate through the secret redactor, attaches a
+  `MemoryProvenance` record on success, and refuses writes to
+  backends whose adapter does not declare `supports_write=True`. Read
+  attempts at UserPromptSubmit and PreToolUse are recorded in audit
+  metadata even when no provider is configured (the result is marked
+  `degraded`). Rulence does **not** replace Honcho or MemPalace, does
+  **not** ship semantic memory, and does **not** prevent every bad
+  memory write.
+- Rulence redacts common secrets (GitHub/AWS/OpenAI/Anthropic/Slack tokens,
+  PEM private keys, basic-auth and database URLs, `KEY=value` env-style
+  assignments) before audit storage, session/trace persistence, and feedback
+  storage. Redaction is **best-effort** and is **not** a complete DLP system —
+  custom or low-entropy secrets may still pass through.
 - Policy files in `~/.rulence/policies` are **user-writable**. The same agent
   or user being "governed" can edit them. This is a guardrail for honest
   mistakes, not a defense against an adversarial user on the same machine.

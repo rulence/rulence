@@ -190,9 +190,42 @@ def _main(argv: list[str] | None = None) -> int:
     feedback_parser.add_argument("--limit", type=int, help="Limit list output to the most recent N records.")
     feedback_parser.add_argument("--json", action="store_true", help="Print JSON output.")
 
+    audit_parser = subparsers.add_parser("audit", help="Inspect runtime audit traces and token estimates.")
+    audit_subparsers = audit_parser.add_subparsers(dest="audit_command", required=True)
+
+    audit_list = audit_subparsers.add_parser("list", help="List session ids that have audit records.")
+    audit_list.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_list.add_argument("--json", action="store_true")
+
+    audit_show = audit_subparsers.add_parser("show", help="Show audit records for a session/corr_id.")
+    audit_show.add_argument("--session", required=True, help="Rulence session id (rs_...).")
+    audit_show.add_argument("--corr", help="Optional corr_id to filter to one turn.")
+    audit_show.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_show.add_argument("--json", action="store_true")
+
+    audit_tokens = audit_subparsers.add_parser("tokens", help="Summarize token estimates by session.")
+    audit_tokens.add_argument("--session", required=True)
+    audit_tokens.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_tokens.add_argument("--json", action="store_true")
+
+    audit_report = audit_subparsers.add_parser("report", help="Full audit report for a session.")
+    audit_report.add_argument("--session", required=True)
+    audit_report.add_argument("--root", help="Audit root. Defaults to ~/.rulence/audit.")
+    audit_report.add_argument("--json", action="store_true")
+
+    claims_parser = subparsers.add_parser("claims", help="Inspect and verify the claims ledger.")
+    claims_subparsers = claims_parser.add_subparsers(dest="claims_command", required=True)
+    claims_verify = claims_subparsers.add_parser("verify", help="Validate docs/claims.yml and scan public copy.")
+    claims_verify.add_argument("--root", help="Repository root. Defaults to the package root.")
+    claims_verify.add_argument("--json", action="store_true", help="Print JSON output.")
+    claims_list = claims_subparsers.add_parser("list", help="List claim ids and statuses.")
+    claims_list.add_argument("--root", help="Repository root. Defaults to the package root.")
+    claims_list.add_argument("--json", action="store_true", help="Print JSON output.")
+
     hook_parser = subparsers.add_parser("hook", help=argparse.SUPPRESS)
     hook_subparsers = hook_parser.add_subparsers(dest="hook_target", required=True)
     hook_subparsers.add_parser("claude-code-pretooluse", help=argparse.SUPPRESS)
+    hook_subparsers.add_parser("claude-code", help=argparse.SUPPRESS)
 
     subparsers.add_parser("mcp", help="Start the MCP stdio server.")
 
@@ -280,7 +313,12 @@ def _main(argv: list[str] | None = None) -> int:
             needs_more_thoughts=args.needs_more_thoughts,
         )
         if args.session_file:
-            Path(args.session_file).expanduser().write_text(json.dumps(session.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+            from .sessions import redacted_session_dict
+
+            Path(args.session_file).expanduser().write_text(
+                json.dumps(redacted_session_dict(session), indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
         if args.session_id:
             SessionStore().save(session)
         _print_reasoning(session.to_dict(), args.json)
@@ -508,9 +546,91 @@ def _main(argv: list[str] | None = None) -> int:
             print("feedback recorded")
         return 0
 
+    if args.command == "audit":
+        from .audit import AuditTraceStore, TokenAccountant
+
+        store = AuditTraceStore(args.root) if getattr(args, "root", None) else AuditTraceStore()
+        if args.audit_command == "list":
+            sessions = store.list_sessions()
+            if args.json:
+                print(json.dumps({"sessions": sessions}, indent=2, sort_keys=True))
+            else:
+                for sid in sessions:
+                    print(sid)
+            return 0
+        if args.audit_command == "show":
+            if args.corr:
+                records = store.read_turn(args.session, args.corr)
+            else:
+                records = store.read_session(args.session)
+            if args.json:
+                print(json.dumps(records, indent=2, sort_keys=True))
+            else:
+                for record in records:
+                    print(_format_audit_line(record))
+            return 0
+        if args.audit_command == "tokens":
+            records = store.read_session(args.session)
+            rollup = TokenAccountant().rollup(records)
+            data = rollup.to_dict()
+            if args.json:
+                print(json.dumps(data, indent=2, sort_keys=True))
+            else:
+                _print_token_rollup(args.session, data)
+            return 0
+        if args.audit_command == "report":
+            records = store.read_session(args.session)
+            report = _build_audit_report(args.session, records)
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                _print_audit_report(report)
+            return 0
+
+    if args.command == "claims":
+        from .claims import load_claims, verify_repo
+
+        root = Path(args.root).expanduser().resolve() if args.root else Path(__file__).resolve().parents[2]
+        if args.claims_command == "verify":
+            violations = verify_repo(root)
+            if args.json:
+                print(json.dumps([v.to_dict() for v in violations], indent=2, sort_keys=True))
+            else:
+                for violation in violations:
+                    location = f"{violation.file}:{violation.line}" if violation.line else violation.file
+                    print(f"{location}: {violation.message}")
+                if not violations:
+                    print("ok: claims ledger and public copy are consistent")
+            return 0 if not violations else 2
+        if args.claims_command == "list":
+            ledger_path = root / "docs" / "claims.yml"
+            if not ledger_path.exists():
+                print(f"error: {ledger_path} not found", file=sys.stderr)
+                return 2
+            ledger = load_claims(ledger_path)
+            rows = [
+                {
+                    "claim_id": claim.claim_id,
+                    "status": claim.status,
+                    "public_copy_allowed": claim.public_copy_allowed,
+                    "claim_text": claim.claim_text,
+                }
+                for claim in ledger.claims
+            ]
+            if args.json:
+                print(json.dumps(rows, indent=2, sort_keys=True))
+            else:
+                for row in rows:
+                    public = "public" if row["public_copy_allowed"] else "internal"
+                    print(f"{row['claim_id']:40s} {row['status']:13s} {public:8s} {row['claim_text']}")
+            return 0
+
     if args.command == "hook":
         if args.hook_target == "claude-code-pretooluse":
             print(json.dumps(_claude_code_pretooluse(sys.stdin.read()), sort_keys=True))
+            return 0
+        if args.hook_target == "claude-code":
+            print(json.dumps(_claude_code_hook(sys.stdin.read()), sort_keys=True))
             return 0
         return 2
 
@@ -686,11 +806,195 @@ def _claude_hook_transcript(payload: dict) -> str | None:
 
 
 def _claude_code_pretooluse(raw_input: str) -> dict:
+    """Backward-compatible entrypoint for ``rulence hook claude-code-pretooluse``.
+
+    Existing settings.json files in the wild call the legacy subcommand
+    directly. The unified dispatcher below replaces it for fresh installs.
+    """
+    payload = _parse_hook_payload(raw_input)
+    return _claude_code_pretooluse_dispatch(payload)
+
+
+def _claude_code_hook(raw_input: str) -> dict:
+    """Unified Claude Code hook dispatcher.
+
+    Reads the ``hook_event_name`` from the payload and routes to the
+    matching handler. Every handled event produces an audit record via
+    :class:`rulence.audit.AuditTraceStore`.
+    """
+    payload = _parse_hook_payload(raw_input)
+    event_name = str(
+        payload.get("hook_event_name") or payload.get("hookEventName") or ""
+    ).strip()
+    if event_name == "PreToolUse" or not event_name:
+        return _claude_code_pretooluse_dispatch(payload)
+    if event_name == "PostToolUse":
+        return _claude_code_posttooluse(payload)
+    if event_name == "UserPromptSubmit":
+        return _claude_code_userpromptsubmit(payload)
+    if event_name == "SessionStart":
+        return _claude_code_sessionstart(payload)
+    if event_name == "SessionEnd":
+        return _claude_code_sessionend(payload)
+    if event_name == "Stop":
+        return _claude_code_stop(payload)
+    # Unknown lifecycle event: still produce an audit record and allow.
+    _record_audit(payload, event_name, decision=None)
+    return {"suppressOutput": True}
+
+
+def _parse_hook_payload(raw_input: str) -> dict:
     payload = json.loads(raw_input) if raw_input.strip() else {}
     if not isinstance(payload, dict):
         raise ValueError("Claude Code hook input must be a JSON object")
+    return payload
+
+
+def _record_audit(
+    payload: dict,
+    event_type: str,
+    *,
+    decision: str | None = None,
+    evidence: tuple[str, ...] = (),
+    tool_name: str | None = None,
+    policy_name: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Write a single audit record for a Claude Code hook event.
+
+    All text fields (evidence, metadata, tool_name, policy_name) pass
+    through :func:`rulence.security.redact_payload` before they are
+    persisted. The raw payload is hashed, never stored. Audit failures
+    degrade to a stderr warning and never break the hook response.
+    """
+    try:
+        import hashlib
+
+        from .audit import AuditTraceStore, CorrelationIdManager, RulenceAuditEvent
+        from .audit.correlation import hash_text
+        from .security import redact_payload
+
+        claude_session = payload.get("session_id") or payload.get("sessionId")
+        manager = CorrelationIdManager()
+
+        if event_type == "SessionStart":
+            ctx = manager.session_started(claude_session)
+        elif event_type == "UserPromptSubmit":
+            prompt = str(payload.get("prompt") or payload.get("user_message") or "")
+            prompt_hash = hash_text(prompt) if prompt else None
+            ctx = manager.user_prompt(claude_session, prompt_hash)
+        elif event_type == "SessionEnd":
+            ctx = manager.session_ended(claude_session)
+        else:
+            ctx = manager.current(claude_session)
+
+        raw_payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+        # Apply redaction at the audit boundary. Text-bearing fields go
+        # through redact_payload; other fields are scalars or hashes.
+        red_evidence, ev_count, ev_types = redact_payload(list(evidence))
+        red_metadata, md_count, md_types = redact_payload(dict(metadata or {}))
+        red_tool_name, tn_count, tn_types = redact_payload(tool_name) if tool_name else (None, 0, ())
+        red_policy_name, pn_count, pn_types = redact_payload(policy_name) if policy_name else (None, 0, ())
+
+        total_redactions = ev_count + md_count + tn_count + pn_count
+        all_types = tuple([*ev_types, *md_types, *tn_types, *pn_types])
+
+        # Top-level token_estimate on the audit event mirrors the sum of
+        # input + output estimates that callers stored in metadata. None
+        # if neither was recorded for this event type.
+        in_est = red_metadata.get("input_estimate") if isinstance(red_metadata, dict) else None
+        out_est = red_metadata.get("output_estimate") if isinstance(red_metadata, dict) else None
+        token_total: int | None = None
+        if isinstance(in_est, int) or isinstance(out_est, int):
+            token_total = int(in_est or 0) + int(out_est or 0)
+
+        event = RulenceAuditEvent.now(
+            event_type=event_type,
+            session_id=ctx.rulence_session_id,
+            corr_id=ctx.corr_id,
+            runner="claude_code",
+            decision=decision,
+            evidence=tuple(red_evidence),
+            policy_name=red_policy_name,
+            tool_name=red_tool_name,
+            redaction_count=total_redactions,
+            redaction_types=all_types,
+            token_estimate=token_total,
+            payload_redacted=total_redactions > 0,
+            raw_payload_hash=raw_payload_hash,
+            metadata=red_metadata,
+        )
+        AuditTraceStore().append(event)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"warn: rulence audit write failed: {exc}", file=sys.stderr)
+
+
+def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
+    from .token_budget import estimate_tokens
+    from .tool_risk import ToolRiskClassifier
+
+    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+
+    classification = ToolRiskClassifier().classify(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        runner="claude_code",
+    )
+
+    # Estimate the synthesized task text as the input side of this event.
+    task_text = _claude_tool_task(payload)
+    in_count, in_method = (
+        estimate_tokens(task_text) if task_text else (0, "none")
+    )
+
+    base_metadata = {
+        "fast_path": not classification.should_run_full_preflight,
+        "risk_level": classification.risk_level,
+        "risk_reasons": list(classification.risk_reasons),
+        "input_estimate": in_count,
+        "output_estimate": 0,
+        "estimator_name": in_method,
+    }
+
+    # When the classifier signals memory is required (high/critical
+    # severity), route the read through the arbiter so the audit
+    # trail records the attempt regardless of whether a provider is
+    # configured.
+    if classification.requires_memory_check and task_text:
+        scope = (
+            "project_context"
+            if classification.risk_level == "critical"
+            else "code_context"
+        )
+        base_metadata.update(_attempt_memory_read(task_text, scope=scope))
+
+    # Fast path: no policy load, no preflight, no memory call. Audit and allow.
+    if not classification.should_run_full_preflight:
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="approve",
+            tool_name=tool_name,
+            metadata=base_metadata,
+        )
+        return {"suppressOutput": True}
+
+    # Full path: existing preflight behavior, with severity escalation
+    # for high/critical classifier verdicts so the universal matcher
+    # never silently allows a clearly destructive call.
     task = _claude_tool_task(payload)
     if not task.strip():
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="approve",
+            tool_name=tool_name,
+            metadata={**base_metadata, "reason": "no_task"},
+        )
         return {"suppressOutput": True}
 
     transcript = _claude_hook_transcript(payload)
@@ -699,22 +1003,325 @@ def _claude_code_pretooluse(raw_input: str) -> dict:
         policy_dir=os.environ.get("RULENCE_POLICY_DIR"),
         transcript=transcript,
     )
-    if result.verdict == "block":
+    policy_ref = getattr(result.policy, "ref", None)
+    checks_run = [check.name for check in result.checks]
+    required_followups = list(result.next_steps)
+    escalated_action = _escalate_action_for_risk(classification.risk_level, result.verdict)
+
+    full_metadata = {
+        **base_metadata,
+        "preflight_verdict": result.verdict,
+        "checks_run": checks_run,
+        "required_followups": required_followups,
+    }
+
+    if escalated_action == "deny":
+        evidence = result.blocks or (
+            tuple(classification.risk_reasons) or ("classifier:critical_call",)
+        )
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="deny",
+            evidence=tuple(evidence),
+            tool_name=tool_name,
+            policy_name=policy_ref,
+            metadata=full_metadata,
+        )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": _hook_reason("Rulence blocked this tool call", result.blocks),
+                "permissionDecisionReason": _hook_reason(
+                    "Rulence blocked this tool call", evidence
+                ),
             }
         }
-    if result.verdict == "warn":
+    if escalated_action == "ask":
+        evidence = (
+            result.warnings
+            or result.next_steps
+            or tuple(classification.risk_reasons)
+            or ("classifier:high_risk_call",)
+        )
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="ask",
+            evidence=tuple(evidence),
+            tool_name=tool_name,
+            policy_name=policy_ref,
+            metadata=full_metadata,
+        )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "ask",
-                "permissionDecisionReason": _hook_reason("Rulence warning", result.warnings or result.next_steps),
+                "permissionDecisionReason": _hook_reason("Rulence warning", evidence),
             }
         }
+    _record_audit(
+        payload,
+        "PreToolUse",
+        decision="approve",
+        tool_name=tool_name,
+        policy_name=policy_ref,
+        metadata=full_metadata,
+    )
+    return {"suppressOutput": True}
+
+
+def _escalate_action_for_risk(risk_level: str, preflight_verdict: str) -> str:
+    """Combine classifier severity with preflight verdict.
+
+    Deterministic rule: ``critical`` always denies, ``high`` always at
+    least asks, ``medium`` follows preflight, ``low`` is fast-pathed
+    upstream and never reaches here. This keeps risky calls from
+    silently passing through a permissive policy file.
+    """
+    base = {"approve": "allow", "warn": "ask", "block": "deny"}.get(
+        preflight_verdict, "ask"
+    )
+    if risk_level == "critical":
+        return "deny"
+    if risk_level == "high":
+        return "deny" if base == "deny" else "ask"
+    return base
+
+
+def _claude_code_sessionstart(payload: dict) -> dict:
+    _record_audit(payload, "SessionStart")
+    return {"suppressOutput": True}
+
+
+def _claude_code_userpromptsubmit(payload: dict) -> dict:
+    from .classifier import classify_task
+    from .token_budget import estimate_tokens
+
+    prompt = str(payload.get("prompt") or payload.get("user_message") or "")
+    in_count, in_method = estimate_tokens(prompt) if prompt else (0, "none")
+    metadata = {
+        "input_estimate": in_count,
+        "output_estimate": 0,
+        "estimator_name": in_method,
+    }
+
+    if prompt:
+        tier = classify_task(prompt).tier
+        metadata["task_tier"] = tier
+        # Tier 3+ work usually benefits from memory context. Route the
+        # read through the arbiter so the audit trail records which
+        # backend was queried, even when providers are absent and the
+        # call degrades.
+        if tier >= 3:
+            scope = "project_context" if tier >= 4 else "user_preferences"
+            metadata.update(_attempt_memory_read(prompt, scope=scope))
+
+    _record_audit(payload, "UserPromptSubmit", metadata=metadata)
+    return {"suppressOutput": True}
+
+
+def _attempt_memory_read(query: str, *, scope: str, corr_id: str | None = None,
+                         policy_name: str | None = None) -> dict:
+    """Run an audit-only memory read through the arbiter.
+
+    Returns a flat dict suitable for merging into audit metadata.
+    Failures are captured (never raised); the caller still writes an
+    audit record.
+    """
+    try:
+        from .memory import MemoryArbiter
+
+        result = MemoryArbiter().read(
+            query,
+            scope=scope,
+            policy=policy_name,
+            corr_id=corr_id,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return {
+            "memory_read_attempted": False,
+            "memory_read_error": str(exc),
+        }
+    return {
+        "memory_read_attempted": True,
+        "memory_read_scope": scope,
+        "memory_read_backend": result.backend,
+        "memory_read_role": result.backend_role,
+        "memory_read_degraded": result.degraded,
+        "memory_read_item_count": len(result.items),
+        "memory_read_error": result.error,
+    }
+
+
+def _claude_code_posttooluse(payload: dict) -> dict:
+    """Observe and audit a Claude Code PostToolUse event.
+
+    Claude Code's PostToolUse hook can append context but cannot replace
+    the tool result the model already received. Rulence therefore
+    *detects, redacts for audit, warns, and marks unsafe* — it does not
+    filter the result before reinjection.
+    """
+    from .review import ToolResultReviewer
+
+    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    tool_output = payload.get("tool_response")
+    if tool_output is None:
+        tool_output = payload.get("tool_output")
+
+    review = ToolResultReviewer().review(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        tool_output=tool_output,
+    )
+
+    metadata: dict = {
+        "review_status": review.status,
+        "redaction_count": review.redaction_count,
+        "redaction_types": list(review.redaction_types),
+        "original_token_estimate": review.original_token_estimate,
+        "filtered_token_estimate": review.filtered_token_estimate,
+        "safe_for_model_context": review.safe_for_model_context,
+        "suggested_action": review.suggested_action,
+        # M7 accounting: PostToolUse is an output event from the tool's
+        # perspective. Use the original (pre-redaction, pre-compaction)
+        # estimate as what the model effectively saw.
+        "input_estimate": 0,
+        "output_estimate": review.original_token_estimate,
+        "estimator_name": "tool_result_reviewer",
+    }
+    if review.summary is not None:
+        metadata["summary_omitted_sections"] = list(review.summary.omitted_sections)
+        metadata["summary_retained_fact_count"] = len(review.summary.retained_facts)
+
+    _record_audit(
+        payload,
+        "PostToolUse",
+        decision=review.status,
+        evidence=review.evidence,
+        tool_name=tool_name,
+        metadata=metadata,
+    )
+    return {"suppressOutput": True}
+
+
+def _claude_code_stop(payload: dict) -> dict:
+    """Run final-response review at Claude Code Stop time.
+
+    Reads audit records for the current ``corr_id``, parses any
+    requires/forbids constraints from the transcript, and runs the
+    deterministic :class:`FinalResponseReviewer`. Honors
+    ``stop_hook_active`` to prevent infinite continuation loops.
+    """
+    from .audit import AuditTraceStore, CorrelationIdManager
+    from .logic import parse_constraints
+    from .review import FinalResponseReviewer
+    from .transcript import parse_transcript_text
+
+    stop_hook_active = bool(payload.get("stop_hook_active"))
+    claude_session = payload.get("session_id") or payload.get("sessionId")
+
+    transcript_text = _claude_hook_transcript(payload) or ""
+    final_response = _final_response_from_payload(payload, transcript_text)
+
+    manager = CorrelationIdManager()
+    ctx = manager.current(claude_session)
+    audit_records: list[dict] = []
+    if ctx.corr_id:
+        try:
+            audit_records = AuditTraceStore().read_turn(ctx.rulence_session_id, ctx.corr_id)
+        except Exception:
+            audit_records = []
+        # Drop prior final_review records so a re-stop does not
+        # double-count its own metadata.
+        audit_records = [
+            r for r in audit_records if r.get("event_type") != "Stop"
+        ]
+
+    # Parse constraints from user-content text only. The raw transcript
+    # is JSONL; ``parse_constraints`` matches ``forbids:`` / ``requires:``
+    # patterns line-by-line and would not match through JSON wrapping.
+    user_text = ""
+    if transcript_text:
+        try:
+            turns = parse_transcript_text(transcript_text)
+            user_text = "\n".join(t.content for t in turns if t.role == "user")
+        except Exception:
+            user_text = ""
+    constraints = list(parse_constraints(user_text))
+
+    review = FinalResponseReviewer().review(
+        final_response=final_response,
+        audit_records=audit_records,
+        constraints=tuple(constraints),
+        transcript=transcript_text,
+    )
+
+    from .token_budget import estimate_tokens as _estimate_tokens
+
+    final_tokens, final_method = (
+        _estimate_tokens(final_response) if final_response else (0, "none")
+    )
+    metadata = {
+        "review_status": review.status,
+        "suggested_action": review.suggested_action,
+        "violated_constraints": list(review.violated_constraints),
+        "missing_required_actions": list(review.missing_required_actions),
+        "trace_mismatches": list(review.trace_mismatches),
+        "secret_finding_count": len(review.secret_findings),
+        "audit_records_inspected": len(audit_records),
+        "stop_hook_active": stop_hook_active,
+        # M7 accounting: the final response is the output side of Stop.
+        "input_estimate": 0,
+        "output_estimate": final_tokens,
+        "estimator_name": final_method,
+    }
+
+    _record_audit(
+        payload,
+        "Stop",
+        decision=review.status,
+        evidence=review.evidence,
+        metadata=metadata,
+    )
+
+    # Conservative continuation: only request a revision when the review
+    # failed and Claude Code is not already inside a continuation. This
+    # is the documented loop-prevention contract for the Stop hook.
+    if review.status == "fail" and not stop_hook_active:
+        return {
+            "decision": "block",
+            "reason": _hook_reason(
+                "Rulence final-response review failed", review.evidence
+            ),
+        }
+
+    return {"suppressOutput": True}
+
+
+def _final_response_from_payload(payload: dict, transcript_text: str) -> str:
+    """Best-effort extraction of the assistant's final message."""
+    direct = (
+        payload.get("final_response")
+        or payload.get("final_message")
+        or payload.get("response")
+    )
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    if not transcript_text:
+        return ""
+    from .transcript import parse_transcript_text
+
+    turns = parse_transcript_text(transcript_text)
+    for turn in reversed(turns):
+        if turn.role == "assistant" and turn.content.strip():
+            return turn.content
+    return ""
+
+
+def _claude_code_sessionend(payload: dict) -> dict:
+    _record_audit(payload, "SessionEnd")
     return {"suppressOutput": True}
 
 
@@ -737,6 +1344,108 @@ def _claude_tool_task(payload: dict) -> str:
 def _hook_reason(prefix: str, details: tuple[str, ...]) -> str:
     detail = "; ".join(details[:3]) if details else "no detail"
     return f"{prefix}: {detail}"
+
+
+def _format_audit_line(record: dict) -> str:
+    timestamp = record.get("timestamp", "")
+    event_type = record.get("event_type", "?")
+    decision = record.get("decision") or "-"
+    tool = record.get("tool_name") or "-"
+    redactions = record.get("redaction_count", 0)
+    tokens = record.get("token_estimate")
+    token_str = f"{tokens}t" if isinstance(tokens, int) else "-"
+    return f"{timestamp} {event_type:18s} decision={decision:8s} tool={tool:30s} redactions={redactions} tokens={token_str}"
+
+
+def _print_token_rollup(session_id: str, data: dict) -> None:
+    print(f"session: {session_id}")
+    print(f"total_estimated:        {data['total_estimated']}")
+    print(f"total_estimated_input:  {data['total_estimated_input']}")
+    print(f"total_estimated_output: {data['total_estimated_output']}")
+    print(f"rulence_overhead_estimate: {data['rulence_overhead_estimate']}")
+    print("by_event_type:")
+    for k, v in sorted(data["by_event_type"].items()):
+        print(f"  {k:20s} {v}")
+    if data["by_tool"]:
+        print("by_tool:")
+        for k, v in sorted(data["by_tool"].items()):
+            print(f"  {k:30s} {v}")
+    if data["by_memory_backend"]:
+        print("by_memory_backend:")
+        for k, v in sorted(data["by_memory_backend"].items()):
+            print(f"  {k:20s} {v}")
+    if data["by_corr_id"]:
+        print("by_corr_id:")
+        for k, v in sorted(data["by_corr_id"].items()):
+            print(f"  {k:25s} {v}")
+
+
+def _build_audit_report(session_id: str, records: list[dict]) -> dict:
+    from .audit import TokenAccountant
+
+    rollup = TokenAccountant().rollup(records)
+
+    decisions: dict[str, int] = {}
+    tools: dict[str, int] = {}
+    redactions = 0
+    redaction_types: dict[str, int] = {}
+    final_review_status: str | None = None
+    pretooluse_count = 0
+    posttooluse_count = 0
+
+    for record in records:
+        decision = record.get("decision")
+        if decision:
+            decisions[decision] = decisions.get(decision, 0) + 1
+        tool = record.get("tool_name")
+        if tool:
+            tools[tool] = tools.get(tool, 0) + 1
+        redactions += int(record.get("redaction_count") or 0)
+        for rt in record.get("redaction_types") or []:
+            redaction_types[rt] = redaction_types.get(rt, 0) + 1
+        if record.get("event_type") == "PreToolUse":
+            pretooluse_count += 1
+        if record.get("event_type") == "PostToolUse":
+            posttooluse_count += 1
+        if record.get("event_type") == "Stop":
+            meta = record.get("metadata") or {}
+            final_review_status = meta.get("review_status") or final_review_status
+
+    return {
+        "session_id": session_id,
+        "record_count": len(records),
+        "tokens": rollup.to_dict(),
+        "decisions": dict(sorted(decisions.items())),
+        "tool_call_counts": dict(sorted(tools.items())),
+        "redaction_count": redactions,
+        "redaction_types": dict(sorted(redaction_types.items())),
+        "final_review_status": final_review_status,
+        "pretooluse_count": pretooluse_count,
+        "posttooluse_count": posttooluse_count,
+    }
+
+
+def _print_audit_report(report: dict) -> None:
+    print(f"session: {report['session_id']}")
+    print(f"record_count: {report['record_count']}")
+    print(f"pretooluse_count: {report['pretooluse_count']}")
+    print(f"posttooluse_count: {report['posttooluse_count']}")
+    print(f"final_review_status: {report['final_review_status']}")
+    print(f"redaction_count: {report['redaction_count']}")
+    if report["redaction_types"]:
+        print("redaction_types:")
+        for k, v in report["redaction_types"].items():
+            print(f"  {k:30s} {v}")
+    if report["decisions"]:
+        print("decisions:")
+        for k, v in report["decisions"].items():
+            print(f"  {k:10s} {v}")
+    if report["tool_call_counts"]:
+        print("tools:")
+        for k, v in report["tool_call_counts"].items():
+            print(f"  {k:30s} {v}")
+    print()
+    _print_token_rollup(report["session_id"], report["tokens"])
 
 
 def _print(data: dict, as_json: bool) -> None:

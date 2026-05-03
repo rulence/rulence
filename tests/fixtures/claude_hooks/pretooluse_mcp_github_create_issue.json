@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "cc-fixture-mcp-github-create-issue-0001",
+  "tool_name": "mcp__github__create_issue",
+  "tool_input": {
+    "owner": "synthetic-org",
+    "repo": "synthetic-repo",
+    "title": "Synthetic test issue (do not act)",
+    "body": "This payload is fixture-only; no real action should be taken."
+  }
+}
