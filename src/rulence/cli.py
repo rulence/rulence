@@ -202,6 +202,7 @@ def _main(argv: list[str] | None = None) -> int:
     hook_parser = subparsers.add_parser("hook", help=argparse.SUPPRESS)
     hook_subparsers = hook_parser.add_subparsers(dest="hook_target", required=True)
     hook_subparsers.add_parser("claude-code-pretooluse", help=argparse.SUPPRESS)
+    hook_subparsers.add_parser("claude-code", help=argparse.SUPPRESS)
 
     subparsers.add_parser("mcp", help="Start the MCP stdio server.")
 
@@ -559,6 +560,9 @@ def _main(argv: list[str] | None = None) -> int:
         if args.hook_target == "claude-code-pretooluse":
             print(json.dumps(_claude_code_pretooluse(sys.stdin.read()), sort_keys=True))
             return 0
+        if args.hook_target == "claude-code":
+            print(json.dumps(_claude_code_hook(sys.stdin.read()), sort_keys=True))
+            return 0
         return 2
 
     if args.command == "mcp":
@@ -733,11 +737,121 @@ def _claude_hook_transcript(payload: dict) -> str | None:
 
 
 def _claude_code_pretooluse(raw_input: str) -> dict:
+    """Backward-compatible entrypoint for ``rulence hook claude-code-pretooluse``.
+
+    Existing settings.json files in the wild call the legacy subcommand
+    directly. The unified dispatcher below replaces it for fresh installs.
+    """
+    payload = _parse_hook_payload(raw_input)
+    return _claude_code_pretooluse_dispatch(payload)
+
+
+def _claude_code_hook(raw_input: str) -> dict:
+    """Unified Claude Code hook dispatcher.
+
+    Reads the ``hook_event_name`` from the payload and routes to the
+    matching handler. Every handled event produces an audit record via
+    :class:`rulence.audit.AuditTraceStore`.
+    """
+    payload = _parse_hook_payload(raw_input)
+    event_name = str(
+        payload.get("hook_event_name") or payload.get("hookEventName") or ""
+    ).strip()
+    if event_name == "PreToolUse" or not event_name:
+        return _claude_code_pretooluse_dispatch(payload)
+    if event_name == "PostToolUse":
+        return _claude_code_posttooluse(payload)
+    if event_name == "UserPromptSubmit":
+        return _claude_code_userpromptsubmit(payload)
+    if event_name == "SessionStart":
+        return _claude_code_sessionstart(payload)
+    if event_name == "SessionEnd":
+        return _claude_code_sessionend(payload)
+    if event_name == "Stop":
+        return _claude_code_stop(payload)
+    # Unknown lifecycle event: still produce an audit record and allow.
+    _record_audit(payload, event_name, decision=None)
+    return {"suppressOutput": True}
+
+
+def _parse_hook_payload(raw_input: str) -> dict:
     payload = json.loads(raw_input) if raw_input.strip() else {}
     if not isinstance(payload, dict):
         raise ValueError("Claude Code hook input must be a JSON object")
+    return payload
+
+
+def _record_audit(
+    payload: dict,
+    event_type: str,
+    *,
+    decision: str | None = None,
+    evidence: tuple[str, ...] = (),
+    tool_name: str | None = None,
+    policy_name: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Write a single audit record for a Claude Code hook event.
+
+    Audit failures must never break a hook response. Writes go through
+    best-effort exception handling and degrade to a stderr warning.
+    """
+    try:
+        import hashlib
+
+        from .audit import AuditTraceStore, CorrelationIdManager, RulenceAuditEvent
+        from .audit.correlation import hash_text
+
+        claude_session = payload.get("session_id") or payload.get("sessionId")
+        manager = CorrelationIdManager()
+
+        if event_type == "SessionStart":
+            ctx = manager.session_started(claude_session)
+        elif event_type == "UserPromptSubmit":
+            prompt = str(payload.get("prompt") or payload.get("user_message") or "")
+            prompt_hash = hash_text(prompt) if prompt else None
+            ctx = manager.user_prompt(claude_session, prompt_hash)
+        elif event_type == "SessionEnd":
+            ctx = manager.session_ended(claude_session)
+        else:
+            ctx = manager.current(claude_session)
+
+        raw_payload_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+        event = RulenceAuditEvent.now(
+            event_type=event_type,
+            session_id=ctx.rulence_session_id,
+            corr_id=ctx.corr_id,
+            runner="claude_code",
+            decision=decision,
+            evidence=evidence,
+            policy_name=policy_name,
+            tool_name=tool_name,
+            redaction_count=0,
+            token_estimate=None,
+            payload_redacted=False,
+            raw_payload_hash=raw_payload_hash,
+            metadata=metadata or {},
+        )
+        AuditTraceStore().append(event)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"warn: rulence audit write failed: {exc}", file=sys.stderr)
+
+
+def _claude_code_pretooluse_dispatch(payload: dict) -> dict:
     task = _claude_tool_task(payload)
+    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+
     if not task.strip():
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="approve",
+            tool_name=tool_name,
+            metadata={"reason": "no_task"},
+        )
         return {"suppressOutput": True}
 
     transcript = _claude_hook_transcript(payload)
@@ -746,7 +860,17 @@ def _claude_code_pretooluse(raw_input: str) -> dict:
         policy_dir=os.environ.get("RULENCE_POLICY_DIR"),
         transcript=transcript,
     )
+    policy_ref = getattr(result.policy, "ref", None)
+
     if result.verdict == "block":
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="deny",
+            evidence=tuple(result.blocks),
+            tool_name=tool_name,
+            policy_name=policy_ref,
+        )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -755,13 +879,55 @@ def _claude_code_pretooluse(raw_input: str) -> dict:
             }
         }
     if result.verdict == "warn":
+        evidence = result.warnings or result.next_steps
+        _record_audit(
+            payload,
+            "PreToolUse",
+            decision="ask",
+            evidence=tuple(evidence),
+            tool_name=tool_name,
+            policy_name=policy_ref,
+        )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "ask",
-                "permissionDecisionReason": _hook_reason("Rulence warning", result.warnings or result.next_steps),
+                "permissionDecisionReason": _hook_reason("Rulence warning", evidence),
             }
         }
+    _record_audit(
+        payload,
+        "PreToolUse",
+        decision="approve",
+        tool_name=tool_name,
+        policy_name=policy_ref,
+    )
+    return {"suppressOutput": True}
+
+
+def _claude_code_sessionstart(payload: dict) -> dict:
+    _record_audit(payload, "SessionStart")
+    return {"suppressOutput": True}
+
+
+def _claude_code_userpromptsubmit(payload: dict) -> dict:
+    _record_audit(payload, "UserPromptSubmit")
+    return {"suppressOutput": True}
+
+
+def _claude_code_posttooluse(payload: dict) -> dict:
+    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+    _record_audit(payload, "PostToolUse", tool_name=tool_name)
+    return {"suppressOutput": True}
+
+
+def _claude_code_stop(payload: dict) -> dict:
+    _record_audit(payload, "Stop")
+    return {"suppressOutput": True}
+
+
+def _claude_code_sessionend(payload: dict) -> dict:
+    _record_audit(payload, "SessionEnd")
     return {"suppressOutput": True}
 
 

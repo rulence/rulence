@@ -33,6 +33,23 @@ from rulence.token_budget import estimate_tokens
 
 
 class RulenceMvpTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Redirect runtime audit/state into a per-test tmpdir so the hook
+        # tests below (and any test that exercises the dispatcher) don't
+        # leak files into the developer's real ~/.rulence/.
+        self._audit_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._audit_tmp.cleanup)
+        env_patch = patch.dict(
+            os.environ,
+            {
+                "RULENCE_AUDIT_DIR": str(Path(self._audit_tmp.name) / "audit"),
+                "RULENCE_STATE_DIR": str(Path(self._audit_tmp.name) / "state"),
+            },
+            clear=False,
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
     def test_classifies_high_risk_destructive_task(self) -> None:
         result = classify_task("delete production credentials")
 

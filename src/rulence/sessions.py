@@ -1,3 +1,9 @@
+"""Rulence reasoning session persistence.
+
+This module stores Rulence reasoning traces and session state. It is not
+the runtime audit log. Runtime event audit records live in
+:mod:`rulence.audit.store`.
+"""
 from __future__ import annotations
 
 import json

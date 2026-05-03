@@ -1,0 +1,18 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "cc-fixture-mcp-post-0001",
+  "tool_name": "mcp__memory__create_entities",
+  "tool_input": {
+    "entities": [
+      {
+        "name": "synthetic_test_entity",
+        "entityType": "Person",
+        "observations": ["fixture observation; not a real secret"]
+      }
+    ]
+  },
+  "tool_response": {
+    "ok": true,
+    "created": ["synthetic_test_entity"]
+  }
+}
