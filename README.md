@@ -2,13 +2,16 @@
 
 Value in Consistency.
 
-**Portable governance for AI agents.**
+**A local policy layer for AI agents.**
 
-One local policy layer for Claude Code, Cursor, n8n, and every MCP-compatible
-agent.
+One CLI + MCP server for Claude Code, Cursor, n8n, and other MCP-compatible
+runners. Real PreToolUse enforcement on Claude Code; advisory-only for Cursor
+and n8n (model has to choose to call preflight). See
+[What Rulence does not do](#what-rulence-does-not-do) before relying on it as
+a security boundary.
 
 > Sequential Thinking is the protocol your agent uses to think.
-> Rulence is the protocol your team uses to govern every agent.
+> Rulence is the local advisory layer you use to keep that thinking in policy.
 
 The MVP gives an agent one first call before it acts:
 
@@ -275,7 +278,7 @@ Local npm package config:
     "rulence": {
       "command": "node",
       "args": [
-        "/Users/aumordecade/Desktop/Rulence MVP/src-js/mcp-server.js"
+        "<path-to-rulence-checkout>/src-js/mcp-server.js"
       ]
     }
   }
@@ -310,10 +313,16 @@ rulence install cursor --dir .
 rulence install n8n
 ```
 
-`claude-code` installs an executable PreToolUse gate. `cursor` writes a project
-rule, and `n8n` prints MCP server config to paste into n8n; those runners enforce
-Rulence when their agent/workflow calls the configured rule or MCP tool before
-acting.
+Enforcement varies by runner:
+
+- `claude-code` installs an executable PreToolUse hook. The runner itself
+  blocks the tool call until Rulence returns — this is real gating.
+- `cursor` writes a project rule into `.cursor/rules/rulence.md`. The model is
+  instructed to call `rulence preflight` before acting, but compliance depends
+  on the model. Treat this as an advisory nudge, not a hard gate.
+- `n8n` prints MCP server config to paste in. Whether the workflow actually
+  calls the tool before its destructive node runs is up to how the workflow is
+  wired.
 
 ## How this replaces Sequential Thinking
 
@@ -373,10 +382,16 @@ forbids(migration, backup)
 The Decomposer also recognizes conservative natural-language constraints:
 
 ```text
-Auth must use JWT
-Don't log credentials
-Never auth with JWT
+Auth must use JWT             # requires(Auth, JWT)
+Don't log credentials         # forbids(log, credentials)
+Never auth with JWT           # forbids(auth, JWT)
+Never migrate without backup  # requires(migrate, backup)  -- double negative
+Don't deploy unless tested    # requires(deploy, tested)   -- double negative
 ```
+
+Patterns that don't match (any "Don't / Never X (with|in|on|using|for|without|
+unless) Y" or "X must Y" form) are silently ignored rather than guessed at, so
+ambiguous prose doesn't produce wrong constraints.
 
 The `constraint_solver` check blocks only when the same condition and target are
 both required and forbidden. Broad prose contradictions remain warnings because
@@ -450,6 +465,24 @@ Release files are included but publishing is intentionally manual:
 
 Publishing requires configuring `NPM_TOKEN`, `PYPI_API_TOKEN`, and GitHub
 package permissions.
+
+## What Rulence does not do
+
+Rulence is a **local advisory layer**, not a sandbox. Be explicit with yourself
+about what's enforced and what isn't:
+
+- It does **not** intercept tool calls on its own. Enforcement comes from the
+  host runner's hook system. Today only the Claude Code installer wires a real
+  PreToolUse gate; Cursor and n8n integrations are advisory.
+- Policy files in `~/.rulence/policies` are **user-writable**. The same agent
+  or user being "governed" can edit them. This is a guardrail for honest
+  mistakes, not a defense against an adversarial user on the same machine.
+- There is **no team policy distribution, signing, or central audit**. Traces
+  in `~/.rulence/sessions` are local JSON files and are also user-writable.
+- There is **no built-in access control or secret redaction**. If you pass a
+  task string containing secrets, Rulence sees and may persist them in traces.
+- It is **not a substitute for the agent runner's own permissions**. Treat
+  Rulence as one layer in defense-in-depth, not the layer.
 
 ## Honest limitations
 
