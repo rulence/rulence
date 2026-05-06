@@ -24,6 +24,10 @@ def mempalace_config() -> MempalaceConfig:
     return MempalaceConfig(command=sys.executable, args=(str(FAKE),), timeout_seconds=1.0)
 
 
+def mempalace_jsonl_config() -> MempalaceConfig:
+    return MempalaceConfig(command=sys.executable, args=(str(FAKE),), timeout_seconds=1.0, framing="jsonl")
+
+
 class MemoryMcpTests(unittest.TestCase):
     def tearDown(self) -> None:
         close_all_clients()
@@ -44,6 +48,14 @@ class MemoryMcpTests(unittest.TestCase):
 
     def test_mempalace_health_returns_tool_count(self) -> None:
         provider = MempalaceMcpProvider(mempalace_config())
+
+        health = provider.health()
+
+        self.assertTrue(health["reachable"])
+        self.assertGreaterEqual(health["tool_count"], 4)
+
+    def test_mempalace_provider_supports_jsonl_framing(self) -> None:
+        provider = MempalaceMcpProvider(mempalace_jsonl_config())
 
         health = provider.health()
 
@@ -78,10 +90,14 @@ class MemoryMcpTests(unittest.TestCase):
 command = "python3"
 args = ["server.py"]
 timeout_seconds = 1.5
+framing = "jsonl"
 
 [honcho]
 url = "http://127.0.0.1:9999"
 api_key_env = "CUSTOM_HONCHO_KEY"
+
+[local]
+path = "~/rulence-checkpoints"
 
 [priority]
 order = ["honcho", "mempalace"]
@@ -93,7 +109,9 @@ order = ["honcho", "mempalace"]
 
         self.assertEqual(config.mempalace.command, "python3")
         self.assertEqual(config.mempalace.args, ("server.py",))
+        self.assertEqual(config.mempalace.framing, "jsonl")
         self.assertEqual(config.honcho.api_key_env, "CUSTOM_HONCHO_KEY")
+        self.assertEqual(config.local.path, "~/rulence-checkpoints")
         self.assertEqual(config.priority, ("honcho", "mempalace"))
 
     def test_mcp_memory_health_tool(self) -> None:

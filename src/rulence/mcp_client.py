@@ -42,6 +42,7 @@ class McpServerHandle:
     args: tuple[str, ...] = ()
     env: dict[str, str] | None = None
     timeout_seconds: float = 5.0
+    framing: str = "headers"
 
 
 _CLIENTS: dict[str, "McpClient"] = {}
@@ -154,6 +155,7 @@ class McpClient:
             write_message(
                 process.stdin,
                 {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+                self.handle.framing,
             )
             response = self._read_response(process, method)
             if response.get("id") != request_id:
@@ -171,7 +173,7 @@ class McpClient:
         process = self._process
         if not process or not process.stdin:
             raise McpServerCrashed(f"{self.handle.name}: subprocess is not running")
-        write_message(process.stdin, {"jsonrpc": "2.0", "method": method, "params": {}})
+        write_message(process.stdin, {"jsonrpc": "2.0", "method": method, "params": {}}, self.handle.framing)
 
     def _read_response(self, process: subprocess.Popen, method: str) -> dict[str, Any]:
         assert process.stdout is not None

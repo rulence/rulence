@@ -139,6 +139,8 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         payload = _context_handoff_tool(arguments)
     elif name == "rulence_context_assemble":
         payload = _context_assemble_tool(arguments)
+    elif name == "rulence_resume_startup":
+        payload = _resume_startup_tool(arguments)
     elif name == "sequentialthinking":
         return _sequentialthinking(arguments)
     else:
@@ -367,6 +369,14 @@ def _tools() -> list[dict[str, Any]]:
                 "required": ["task_id"],
             },
         },
+        {
+            "name": "rulence_resume_startup",
+            "description": (
+                "Read the newest active checkpoint and return the startup "
+                "resume prompt Hermes should show: continue, pause, or mark done."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
     ]
 
 
@@ -374,6 +384,12 @@ def _context_bus():
     from .context import AgentContextBus, ContextStore
 
     return AgentContextBus(store=ContextStore())
+
+
+def _resume_startup_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    from .context import ActiveCheckpointStore
+
+    return ActiveCheckpointStore().resume_summary()
 
 
 def _context_snapshot_tool(arguments: dict[str, Any]) -> dict[str, Any]:

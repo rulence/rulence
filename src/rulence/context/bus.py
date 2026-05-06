@@ -32,6 +32,7 @@ from typing import Any, Iterable
 from .assembler import ContextAssembler
 from .conflicts import ConflictReport, detect_conflicts
 from .fragment import ContextFragment
+from .resume import ActiveCheckpointStore, default_active_checkpoint_dir
 from .snapshot import ContextSnapshot
 from .store import ContextStore
 from .task_state import TaskState
@@ -66,12 +67,22 @@ class AgentContextBus:
         *,
         store: ContextStore | None = None,
         assembler: ContextAssembler | None = None,
+        checkpoint_store: ActiveCheckpointStore | None = None,
     ) -> None:
+        explicit_tasks_dir = directory is not None or bool(os.environ.get("RULENCE_TASKS_DIR"))
         self.directory = (
             Path(directory).expanduser() if directory else default_tasks_dir()
         )
         self.store = store
         self.assembler = assembler or ContextAssembler(store=store)
+        if checkpoint_store is not None:
+            self.checkpoint_store = checkpoint_store
+        elif os.environ.get("RULENCE_ACTIVE_CHECKPOINT_DIR") or os.environ.get("RULENCE_LOCAL_MEMORY_PATH"):
+            self.checkpoint_store = ActiveCheckpointStore(default_active_checkpoint_dir())
+        elif explicit_tasks_dir:
+            self.checkpoint_store = ActiveCheckpointStore(self.directory.parent / "active-checkpoints")
+        else:
+            self.checkpoint_store = ActiveCheckpointStore()
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -167,7 +178,34 @@ class AgentContextBus:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
+        self._write_active_checkpoint(task_id, event_type=event_type, event=record)
         return record
+
+    def _write_active_checkpoint(
+        self,
+        task_id: str,
+        *,
+        event_type: str,
+        event: dict[str, Any],
+    ) -> None:
+        """Best-effort active checkpoint update for cold-start resume.
+
+        Checkpoints are a fast local resume anchor; failures must not
+        break the governance event stream. Honcho/MemPalace remain the
+        canonical memory backends.
+        """
+        try:
+            state = self.load_state(task_id)
+        except (TaskNotFoundError, OSError, json.JSONDecodeError, ValueError):
+            return
+        try:
+            self.checkpoint_store.write_for_task(
+                state,
+                event_type=event_type,
+                event=event,
+            )
+        except OSError:
+            return
 
     def read_events(self, task_id: str) -> list[dict[str, Any]]:
         path = self.events_path(task_id)

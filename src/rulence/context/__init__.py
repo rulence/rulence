@@ -41,6 +41,7 @@ from .relevance import (
     RelevanceScore,
     RelevanceScorer,
 )
+from .resume import ActiveCheckpointStore, default_active_checkpoint_dir
 from .snapshot import ContextSnapshot, snapshot_content_hash
 from .store import ContextStore, default_context_dir
 from .task_state import (
@@ -53,6 +54,7 @@ from .task_state import (
 
 __all__ = [
     "AgentContextBus",
+    "ActiveCheckpointStore",
     "AssemblyResult",
     "BACKEND_ROLE_WEIGHTS",
     "Blocker",
@@ -76,6 +78,7 @@ __all__ = [
     "TASK_STATE_VERSION",
     "TaskNotFoundError",
     "TaskState",
+    "default_active_checkpoint_dir",
     "default_context_dir",
     "default_tasks_dir",
     "detect_conflicts",

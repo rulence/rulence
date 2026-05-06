@@ -345,6 +345,12 @@ def _main(argv: list[str] | None = None) -> int:
     )
     context_conflicts.add_argument("--json", action="store_true")
 
+    context_resume = context_subparsers.add_parser(
+        "resume",
+        help="Print the newest active checkpoint startup prompt.",
+    )
+    context_resume.add_argument("--json", action="store_true")
+
     hook_parser = subparsers.add_parser("hook", help=argparse.SUPPRESS)
     hook_subparsers = hook_parser.add_subparsers(dest="hook_target", required=True)
     hook_subparsers.add_parser("claude-code-pretooluse", help=argparse.SUPPRESS)
@@ -945,6 +951,13 @@ def _context_command(args) -> int:
             return 2
         _print(report.to_dict(), getattr(args, "json", False))
         return 0 if not report.has_conflicts else 1
+
+    if args.context_command == "resume":
+        from .context import ActiveCheckpointStore
+
+        summary = ActiveCheckpointStore().resume_summary()
+        _print(summary, getattr(args, "json", False))
+        return 0
 
     return 2
 

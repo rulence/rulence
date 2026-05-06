@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib import error, parse
@@ -39,6 +40,15 @@ class MemoryProvider:
 
 class MemoryProviderError(RuntimeError):
     pass
+
+
+def _load_memory_config() -> MemoryConfig:
+    """Load memory config through the public package hook when patched by callers."""
+    public_memory_module = sys.modules.get("rulence.memory")
+    public_loader = getattr(public_memory_module, "load_memory_config", None) if public_memory_module else None
+    if public_loader is not None and public_loader is not load_memory_config:
+        return public_loader()
+    return load_memory_config()
 
 
 class HonchoError(MemoryProviderError):
@@ -149,7 +159,7 @@ class HttpMemoryProvider(MemoryProvider):
 
 class HonchoMemoryProvider(HttpMemoryProvider):
     def __init__(self, base_url: str | None = None, config: HonchoConfig | None = None) -> None:
-        config = config or load_memory_config().honcho
+        config = config or _load_memory_config().honcho
         super().__init__(
             base_url or config.url,
             "honcho",
@@ -161,7 +171,7 @@ class HonchoMemoryProvider(HttpMemoryProvider):
 
 class MemPalaceMemoryProvider(HttpMemoryProvider):
     def __init__(self, base_url: str | None = None, config: MempalaceConfig | None = None) -> None:
-        config = config or load_memory_config().mempalace
+        config = config or _load_memory_config().mempalace
         super().__init__(
             base_url or config.url or os.environ.get("MEMPALACE_URL", "http://127.0.0.1:8788"),
             "mempalace",
@@ -174,7 +184,7 @@ class MempalaceMcpProvider(MemoryProvider):
     name = "mempalace"
 
     def __init__(self, config: MempalaceConfig | None = None, client: McpClient | None = None) -> None:
-        self.config = config or load_memory_config().mempalace
+        self.config = config or _load_memory_config().mempalace
         self._client = client
         self._wings: list[str] | None = None
 
@@ -236,6 +246,7 @@ class MempalaceMcpProvider(MemoryProvider):
             args=self.config.args,
             env=self.config.env,
             timeout_seconds=self.config.timeout_seconds,
+            framing=self.config.framing,
         )
         return get_client(handle)
 
@@ -252,11 +263,12 @@ def retrieve_memory(
 ) -> list[MemoryItem]:
     if not provider:
         return []
-    config = config or load_memory_config()
+    config = config or _load_memory_config()
     if provider == "local":
-        if not path:
+        local_path = path or config.local.path
+        if not local_path:
             raise ValueError("--memory-path is required for local memory provider")
-        return LocalFileMemoryProvider(path).retrieve(query, limit)
+        return LocalFileMemoryProvider(local_path).retrieve(query, limit)
     if provider == "honcho":
         return HonchoMemoryProvider(url, config.honcho).retrieve(query, limit)
     if provider == "mempalace":
@@ -278,7 +290,7 @@ def retrieve_combined(
 ) -> list[MemoryItem]:
     paths = paths or {}
     urls = urls or {}
-    config = config or load_memory_config()
+    config = config or _load_memory_config()
     items: list[MemoryItem] = []
     for provider in providers:
         provider = provider.strip()
@@ -302,12 +314,13 @@ def retrieve_combined(
 
 
 def memory_health(provider: str = "all", *, path: str | None = None, config: MemoryConfig | None = None) -> dict:
-    config = config or load_memory_config()
+    config = config or _load_memory_config()
     providers = ("local", "honcho", "mempalace") if provider == "all" else (provider,)
     results: dict[str, dict] = {}
     for name in providers:
         if name == "local":
-            target = Path(path).expanduser() if path else None
+            configured_path = path or config.local.path
+            target = Path(configured_path).expanduser() if configured_path else None
             results[name] = {
                 "provider": "local",
                 "reachable": bool(target and target.exists()),
@@ -328,12 +341,12 @@ def memory_health(provider: str = "all", *, path: str | None = None, config: Mem
 
 
 def mempalace_wings(config: MemoryConfig | None = None) -> list[str]:
-    config = config or load_memory_config()
+    config = config or _load_memory_config()
     return MempalaceMcpProvider(config.mempalace).list_wings()
 
 
 def mempalace_rooms(wing: str, config: MemoryConfig | None = None) -> list[str]:
-    config = config or load_memory_config()
+    config = config or _load_memory_config()
     return MempalaceMcpProvider(config.mempalace).list_rooms(wing)
 
 
