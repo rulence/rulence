@@ -15,6 +15,21 @@ jobs:
           python-version: "3.12"
       - run: PYTHONPATH=src python -m unittest discover -s tests
 
+  claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: PYTHONPATH=src python -m rulence claims verify --require-evals
+      - run: PYTHONPATH=src python -m rulence eval run --json --out eval-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.json
+        if: always()
+
   python-package:
     runs-on: ubuntu-latest
     steps:

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rulence.audit import AuditTraceStore
 from rulence.context import (
     ContextAssembler,
     ContextFragment,
@@ -178,6 +179,41 @@ class ContextAssemblerTests(unittest.TestCase):
             compress=False,
         )
         self.assertIn("big_a", result.dropped_fragment_ids)
+
+    def test_unscoped_store_assembly_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ContextStore(Path(tmp))
+            store.add(_fragment(text="anything", corr_id="ct_a"))
+            asm = ContextAssembler(store=store)
+            with self.assertRaises(ValueError):
+                asm.assemble("anything", max_tokens=2000)
+
+    def test_assembly_emits_audit_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = AuditTraceStore(root=Path(tmp) / "audit")
+            asm = ContextAssembler(audit_store=audit, runner="rulence-test")
+            a = _fragment(text="audit logging", fragment_id="a")
+            result = asm.assemble(
+                "audit logging",
+                extra_fragments=(a,),
+                corr_id="ct_audit",
+                session_id="rs_audit",
+                task_id="task_audit",
+                max_tokens=2000,
+            )
+            records = audit.read_turn("rs_audit", "ct_audit")
+            self.assertEqual(len(records), 1)
+            event = records[0]
+            self.assertEqual(event["event_type"], "ContextAssembled")
+            self.assertEqual(event["corr_id"], "ct_audit")
+            self.assertEqual(event["runner"], "rulence-test")
+            self.assertEqual(
+                event["metadata"]["snapshot_id"], result.snapshot.snapshot_id
+            )
+            self.assertEqual(event["metadata"]["task_id"], "task_audit")
+            self.assertEqual(event["metadata"]["candidate_count"], 1)
+            self.assertEqual(event["metadata"]["included_count"], 1)
+            self.assertEqual(event["metadata"]["dropped_count"], 0)
 
 
 if __name__ == "__main__":

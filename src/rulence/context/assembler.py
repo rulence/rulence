@@ -13,9 +13,14 @@ the governed context for the next reasoning step. It:
    user instructions, blockers) and "optional".
 6. Calls :class:`ContextBudgeter` to fit the final list into the budget.
 7. Optionally compresses the fitted list with :class:`ContextCompressor`.
-8. Records a :class:`ContextSnapshot` describing what made the cut and
-   appends an audit event to the configured
-   :class:`rulence.audit.AuditTraceStore`.
+8. Records a :class:`ContextSnapshot` describing what made the cut and,
+   when an :class:`rulence.audit.AuditTraceStore` is configured, appends
+   a ``ContextAssembled`` audit event so assembly decisions are
+   inspectable.
+
+When a :class:`ContextStore` is configured the caller must scope the
+assembly via ``corr_id``, ``session_id``, or ``task_id``; an unscoped
+``store.list()`` fallback would mix fragments across tasks.
 """
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from ..audit import AuditTraceStore, RulenceAuditEvent
 from ..logic import Constraint
 from .budgeter import ContextBudgeter, ContextBudgetResult
 from .compressor import CompressedContext, ContextCompressor
@@ -64,11 +70,15 @@ class ContextAssembler:
         scorer: RelevanceScorer | None = None,
         budgeter: ContextBudgeter | None = None,
         compressor: ContextCompressor | None = None,
+        audit_store: AuditTraceStore | None = None,
+        runner: str = "rulence-context",
     ) -> None:
         self.store = store
         self.scorer = scorer or RelevanceScorer()
         self.budgeter = budgeter or ContextBudgeter()
         self.compressor = compressor or ContextCompressor()
+        self.audit_store = audit_store
+        self.runner = runner
 
     def assemble(
         self,
@@ -90,14 +100,21 @@ class ContextAssembler:
     ) -> AssemblyResult:
         candidates: list[ContextFragment] = []
 
-        # 1. Pull candidates from the store (if any).
+        # 1. Pull candidates from the store (if any). A configured store
+        # must be scoped — unscoped ``store.list()`` would mix fragments
+        # across tasks and silently break governance boundaries.
         if self.store is not None:
             if corr_id:
                 candidates.extend(self.store.by_corr_id(corr_id))
             elif session_id:
                 candidates.extend(self.store.by_session_id(session_id))
+            elif task_id:
+                candidates.extend(self.store.by_corr_id(task_id))
             else:
-                candidates.extend(self.store.list())
+                raise ValueError(
+                    "ContextAssembler.assemble requires corr_id, session_id, "
+                    "or task_id when a ContextStore is configured."
+                )
 
         # 2. Memory items become fragments inline. They are not
         # persisted by this call; that is the arbiter's job.
@@ -192,6 +209,40 @@ class ContextAssembler:
             "preferred_backend": preferred_backend,
             "current_tool": current_tool,
         }
+
+        # 9. Audit. Assembly decisions must be inspectable.
+        if self.audit_store is not None:
+            audit_session = session_id or task_id or corr_id or "rulence-context"
+            event = RulenceAuditEvent.now(
+                event_type="ContextAssembled",
+                session_id=audit_session,
+                runner=self.runner,
+                corr_id=corr_id,
+                policy_name=_policy_ref(policy),
+                tool_name=current_tool,
+                token_estimate=budget.token_estimate_after,
+                metadata={
+                    "snapshot_id": snapshot.snapshot_id,
+                    "task_id": task_id,
+                    "candidate_count": len(candidates),
+                    "ranked_count": len(ranked_fragments),
+                    "required_count": len(required_ids),
+                    "included_count": len(budget.included_fragments),
+                    "dropped_count": len(budget.dropped_fragments),
+                    "token_estimate_before": budget.token_estimate_before,
+                    "token_estimate_after": budget.token_estimate_after,
+                    "max_tokens": max_tokens,
+                    "policy_tier": policy_tier,
+                    "preferred_backend": preferred_backend,
+                    "compressed": compressed is not None,
+                    "validation_status": (
+                        compressed.validation_status if compressed else None
+                    ),
+                    "memory_backends_used": list(snapshot.memory_backends_used),
+                },
+            )
+            self.audit_store.append(event)
+
         return AssemblyResult(
             snapshot=snapshot,
             budget=budget,

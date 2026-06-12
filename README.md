@@ -595,9 +595,12 @@ about what's enforced and what isn't:
   mistakes, not a defense against an adversarial user on the same machine.
 - There is **no team policy distribution, signing, or central audit**. Traces
   in `~/.rulence/sessions` are local JSON files and are also user-writable.
-- There is **no built-in access control or secret redaction**. If you pass a
-  task string or transcript containing secrets, Rulence sees them, runs them
-  through the configured checks, and may persist them in trace files.
+- There is **no built-in access control**. Secret redaction is best-effort
+  and runs at configured storage/audit boundaries (see the redactor bullet
+  above), but it is **not** a complete DLP system. If you pass a task string
+  or transcript containing secrets, Rulence sees them, runs them through the
+  configured checks, and may persist them in trace files when no detector
+  matches.
 - It does **not** auto-summarize or prune the agent's conversation. The
   transcript-aware checks (above) inspect what they're given and suggest
   pruning; rewriting the agent's working context is the runner's job.
